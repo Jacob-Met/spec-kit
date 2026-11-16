@@ -477,9 +477,11 @@ def external_lifecycle(operation: str):
                         )
                     )
                 )
-                # Built-in upgrades can overwrite files before a failing setup
-                # raises; they need the same mutation journal as external ones.
-                if not records and not download and operation != "upgrade":
+                # Built-in upgrades and installs can overwrite existing files
+                # before setup fails; use the mutation journal for both.
+                if not records and not download and operation != "upgrade" and not (
+                    operation == "install" and key in BUILTIN_INTEGRATION_KEYS
+                ):
                     return handler(*args, **kwargs)
                 with ExitStack() as stack:
                     messages: list[str] = []
