@@ -174,6 +174,9 @@ class TestExtensionAddCLI:
         assert "name: speckit-test-ext-hello" in content
         assert "metadata:" in content
         assert "source: test-ext:commands/hello.md" in content
+        metadata = yaml.safe_load(content.split("---", 2)[1])["metadata"]
+        assert metadata["version"] == "1.0.0"
+        assert 'version: "1.0.0"' in content
 
     def test_add_dev_replaces_existing_codex_skill_symlink(
         self, extension_dir, project_dir, temp_dir

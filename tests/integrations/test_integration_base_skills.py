@@ -12,6 +12,7 @@ import os
 
 import yaml
 
+from specify_cli import get_speckit_version
 from specify_cli.integrations import INTEGRATION_REGISTRY, get_integration
 from specify_cli.integrations.base import SkillsIntegration
 from specify_cli.integrations.manifest import IntegrationManifest
@@ -125,6 +126,7 @@ class SkillsIntegrationTests:
             assert "metadata" in fm, f"{f} frontmatter missing 'metadata'"
             assert fm["metadata"]["author"] == "github-spec-kit"
             assert "source" in fm["metadata"]
+            assert fm["metadata"]["version"] == get_speckit_version()
 
     def test_skill_uses_template_descriptions(self, tmp_path):
         """SKILL.md should use the original template description for ZIP parity."""

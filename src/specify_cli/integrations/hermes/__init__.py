@@ -19,6 +19,7 @@ from typing import Any
 
 import yaml
 
+from ..._assets import get_speckit_version
 from ..base import IntegrationOption, SkillsIntegration, yaml_quote
 from ..manifest import IntegrationManifest
 
@@ -113,6 +114,11 @@ class HermesIntegration(SkillsIntegration):
         global_skills_dir = self._hermes_home_skills_dir()
         global_skills_dir.mkdir(parents=True, exist_ok=True)
 
+        version = get_speckit_version()
+        version_line = (
+            f"  version: {yaml_quote(version)}\n"
+            if version not in (None, "", "unknown") else ""
+        )
         created: list[Path] = []
 
         for src_file in templates:
@@ -196,6 +202,7 @@ class HermesIntegration(SkillsIntegration):
                 f"metadata:\n"
                 f"  author: {yaml_quote('github-spec-kit')}\n"
                 f"  source: {yaml_quote('templates/commands/' + src_file.name)}\n"
+                f"{version_line}"
                 f"---\n"
                 f"{processed_body}"
             )
