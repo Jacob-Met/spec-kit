@@ -9,6 +9,7 @@ import yaml
 from specify_cli import AGENT_CONFIG
 from specify_cli.agents import CommandRegistrar as AgentCommandRegistrar
 from specify_cli.extensions import CommandRegistrar
+from specify_cli.integrations import BUILTIN_INTEGRATION_KEYS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -121,7 +122,11 @@ class TestAgentConfigConsistency:
 
     def test_issue_template_agent_lists_match_runtime_integrations(self):
         """GitHub issue templates should list all concrete built-in agents."""
-        concrete_agent_keys = set(AGENT_CONFIG) - {"generic", "none"}
+        # Runtime catalog installs can extend AGENT_CONFIG during the suite;
+        # issue templates enumerate stable built-in integrations, not plugins.
+        concrete_agent_keys = (
+            set(AGENT_CONFIG) & BUILTIN_INTEGRATION_KEYS
+        ) - {"generic", "none"}
         issue_template_agent_keys = set(ISSUE_TEMPLATE_AGENT_KEYS)
 
         missing_agent_keys = sorted(concrete_agent_keys - issue_template_agent_keys)
