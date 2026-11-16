@@ -198,7 +198,10 @@ Shows the highest-priority layer's path and source. If output is composed,
 it also shows the contributing composition chain, starting at its effective
 base. The displayed path is not a file containing the final composed output.
 Invalid composition produces a warning; a missing name is reported as not
-found. For all artifact kinds and hidden layers, use the separate
+found. A project override replaces every preset layer for the same artifact;
+when enabled presets are hidden this way, resolution prints a warning naming
+the affected presets and their strategies. For all artifact kinds and hidden
+layers, use the separate
 [artifact reference](../overview/artifacts.md).
 
 ## Enable or disable a preset

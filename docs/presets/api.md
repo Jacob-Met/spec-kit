@@ -122,7 +122,9 @@ Within the preset and extension layers, lower priority numbers win, then
 alphabetical IDs break ties. Disabled entries are excluded. Safe
 unregistered extension directories participate at implicit priority `10`;
 disabled, corrupt, or missing registered extensions are not re-admitted as
-unregistered contributions.
+unregistered contributions. Project-local overrides use the replace strategy
+and hide lower-priority preset changes to the same artifact; the preset
+resolve CLI warns when enabled preset layers are hidden this way.
 
 | Type | Project-local override | Conventional preset subdirectory |
 | --- | --- | --- |
