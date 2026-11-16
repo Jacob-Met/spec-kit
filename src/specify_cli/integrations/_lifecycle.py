@@ -320,9 +320,21 @@ def _transaction(
             folders.add(folder.rstrip("/"))
         manifest_path = root / ".specify" / "integrations" / f"{key}.manifest.json"
         if manifest_path.exists():
-            manifest = IntegrationManifest.load(key, root)
+            try:
+                manifest = IntegrationManifest.load(key, root)
+            except (ValueError, OSError) as exc:
+                raise installer.IntegrationInstallError(
+                    f"Integration manifest for {key!r} is unreadable: {exc}"
+                ) from exc
             for relative in manifest.files:
-                installer.safe_project_path(root, relative, allow_leaf_symlink=True)
+                try:
+                    installer.safe_project_path(root, relative, allow_leaf_symlink=True)
+                except installer.IntegrationInstallError as exc:
+                    if not str(exc).startswith("Symlinked integration path: "):
+                        raise
+                    # A stale owned path can now have an unrelated symlinked
+                    # ancestor. Keep it out of rollback scopes; never traverse it.
+                    continue
                 manifest_leaves.add(relative)
     for integration in INTEGRATION_REGISTRY.values():
         if type(integration).__module__.startswith(installer._MODULE_PREFIX):
@@ -465,7 +477,9 @@ def external_lifecycle(operation: str):
                         )
                     )
                 )
-                if not records and not download:
+                # Built-in upgrades can overwrite files before a failing setup
+                # raises; they need the same mutation journal as external ones.
+                if not records and not download and operation != "upgrade":
                     return handler(*args, **kwargs)
                 with ExitStack() as stack:
                     messages: list[str] = []
