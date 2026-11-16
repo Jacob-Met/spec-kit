@@ -1688,6 +1688,7 @@ class ExtensionManager:
                 description,
                 f"extension:{manifest.id}",
                 author=manifest.data["extension"].get("author"),
+                version=manifest.version,
             )
             # Preserve the command's argument-hint in the generated skill,
             # mirroring the core template path (ClaudeIntegration.setup injects
@@ -4399,6 +4400,7 @@ class CommandRegistrar:
             link_outputs=link_outputs,
             extension_id=manifest.id,
             author=manifest.data["extension"].get("author"),
+            version=manifest.version,
         )
 
     def register_commands_for_all_agents(
@@ -4423,6 +4425,7 @@ class CommandRegistrar:
             only_agent=only_agent,
             extension_id=manifest.id,
             author=manifest.data["extension"].get("author"),
+            version=manifest.version,
         )
 
     def unregister_commands(

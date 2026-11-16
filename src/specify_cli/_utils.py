@@ -107,6 +107,22 @@ def relative_extension_path_violation(value: Any) -> str | None:
     return None
 
 
+class _QuotedVersion(str):
+    """A generated skill version that remains a YAML string in every release."""
+
+
+class _FrontmatterDumper(yaml.SafeDumper):
+    pass
+
+
+_FrontmatterDumper.add_representer(
+    _QuotedVersion,
+    lambda dumper, value: dumper.represent_scalar(
+        "tag:yaml.org,2002:str", str(value), style='"'
+    ),
+)
+
+
 def dump_frontmatter(data: dict[str, Any]) -> str:
     """Serialize skill/command frontmatter to a YAML string.
 
@@ -114,7 +130,15 @@ def dump_frontmatter(data: dict[str, Any]) -> str:
     preserves Unicode descriptions and ``sort_keys=False`` keeps key order, so no
     call site can silently drop either.
     """
-    return yaml.safe_dump(data, sort_keys=False, allow_unicode=True).strip()
+    metadata = data.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("version"), str):
+        data = {
+            **data,
+            "metadata": {**metadata, "version": _QuotedVersion(metadata["version"])},
+        }
+    return yaml.dump(
+        data, Dumper=_FrontmatterDumper, sort_keys=False, allow_unicode=True
+    ).strip()
 
 
 def run_command(

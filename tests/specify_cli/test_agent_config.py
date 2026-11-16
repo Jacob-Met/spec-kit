@@ -78,3 +78,64 @@ def test_resolve_default_init_integration_invalid_warns_and_falls_back(
 def test_resolve_default_init_integration_re_exported_from_init():
     from specify_cli import resolve_default_init_integration
     assert callable(resolve_default_init_integration)
+
+
+def test_skill_frontmatter_version_is_optional_and_text():
+    from specify_cli.agents import CommandRegistrar
+
+    args = ("claude", "speckit-plan", "Plan", "templates/commands/plan.md")
+    for absent in (None, "", "unknown"):
+        fm = CommandRegistrar.build_skill_frontmatter(*args, version=absent)
+        assert fm["metadata"] == {
+            "author": "github-spec-kit",
+            "source": "templates/commands/plan.md",
+        }
+
+    versioned = CommandRegistrar.build_skill_frontmatter(*args, version="1.10")
+    assert versioned["metadata"]["version"] == "1.10"
+    from specify_cli._utils import dump_frontmatter
+
+    assert 'version: "1.10"' in dump_frontmatter(versioned)
+    versioned["metadata"]["version"] = "1.4.0"
+    assert 'version: "1.4.0"' in dump_frontmatter(versioned)
+    assert type(versioned["metadata"]["version"]) is str
+
+
+def test_native_skill_registrar_propagates_source_version_and_quotes_yaml(tmp_path):
+    from specify_cli.agents import CommandRegistrar
+    source_dir = tmp_path / "preset"
+    source_dir.mkdir()
+    command_dir = source_dir / "commands"
+    command_dir.mkdir()
+    (command_dir / "hello.md").write_text("---\ndescription: Hello\n---\nHello\n")
+    target = tmp_path / "project"
+    target.mkdir()
+    registrar = CommandRegistrar(target)
+    (target / ".claude" / "skills").mkdir(parents=True)
+    names = registrar.register_commands(
+        "claude",
+        [
+            {
+                "name": "speckit.example.hello",
+                "file": "commands/hello.md",
+                "aliases": ["speckit.example.hi"],
+            }
+        ],
+        "example",
+        source_dir,
+        target,
+        version="1.10",
+        author="Acme",
+    )
+    assert set(names) == {"speckit.example.hello", "speckit.example.hi"}
+    import yaml
+
+    for skill in ("speckit-example-hello", "speckit-example-hi"):
+        content = (target / ".claude" / "skills" / skill / "SKILL.md").read_text()
+        assert 'version: "1.10"' in content
+        metadata = yaml.safe_load(content.split("---", 2)[1])["metadata"]
+        assert metadata == {
+            "author": "Acme",
+            "source": "example:commands/hello.md",
+            "version": "1.10",
+        }
