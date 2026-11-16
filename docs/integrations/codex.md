@@ -31,6 +31,8 @@ before installing another agent that shares this directory.
 `--integration-options="--skills"` explicitly selects the skills layout, which
 is already the only supported layout for this integration. Native events use
 `.codex/config.toml`; `--events false` disables Spec Kit event handlers.
+Removing Spec Kit event handlers keeps user comments even when no other TOML
+settings remain; it deletes the file only when the remainder is whitespace.
 See [runtime events](cli.md#runtime-events).
 
 Workflow steps use `codex exec <prompt>`, with `--model` when configured and

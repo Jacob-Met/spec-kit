@@ -644,12 +644,9 @@ class VibeIntegration(SkillsIntegration):
             return False
         if cleaned == existing:
             return False
-        non_comment_content = "\n".join(
-            line
-            for line in cleaned.splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        )
-        if not non_comment_content:
+        # Comments belong to the user even when no hook definitions remain.
+        # Only remove a config file that becomes entirely blank.
+        if not cleaned.strip():
             _unlink_file(path, missing_ok=True)
             return True
         _write_bytes(path, cleaned.encode("utf-8"))
