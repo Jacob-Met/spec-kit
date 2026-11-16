@@ -149,3 +149,30 @@ def test_failed_builtin_secondary_install_preserves_user_file(
     assert result.exit_code != 0
     assert target.read_bytes() == b"My personal prompt", result.output
     assert state_path.read_bytes() == state_bytes, result.output
+
+
+def test_failed_builtin_switch_restores_previous_integration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A setup failure after Phase 1 must not uninstall the old integration."""
+    project = _init_project(tmp_path, "claude")
+    manifest = IntegrationManifest.load("claude", project)
+    previous_file = project / next(
+        rel for rel in manifest.files if rel.startswith(".claude/")
+    )
+    previous_bytes = previous_file.read_bytes()
+    state_path = project / ".specify/integration.json"
+    state_bytes = state_path.read_bytes()
+    target = project / ".github/agents/speckit-partial.agent.md"
+    assert not target.exists()
+
+    def partial_then_fail(project_root, new_manifest, **kwargs):
+        new_manifest.record_file(target.relative_to(project_root), b"PARTIAL")
+        raise RuntimeError("probe: switch target failed during setup")
+
+    monkeypatch.setattr(get_integration("copilot"), "setup", partial_then_fail)
+    result = _run_in_project(project, ["integration", "switch", "copilot", "--script", "sh"])
+    assert result.exit_code != 0
+    assert previous_file.read_bytes() == previous_bytes, result.output
+    assert state_path.read_bytes() == state_bytes, result.output
+    assert not target.exists(), result.output

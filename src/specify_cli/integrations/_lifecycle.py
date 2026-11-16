@@ -190,9 +190,16 @@ class _FileJournal:
         path = path.absolute()
         boundary = self.root
         if not path.is_relative_to(boundary):
-            if not any(path.is_relative_to(scope) for scope in self.home_scopes):
+            # The project may have been opened through a directory symlink;
+            # some host writers use the resolved path. Normalize only when
+            # the canonical output is still beneath the same project root.
+            canonical_root = boundary.resolve()
+            if path.is_relative_to(canonical_root):
+                path = boundary / path.relative_to(canonical_root)
+            elif not any(path.is_relative_to(scope) for scope in self.home_scopes):
                 raise installer.IntegrationInstallError(f"Integration output escapes trusted scopes: {path}")
-            boundary = Path.home().absolute()
+            else:
+                boundary = Path.home().absolute()
         relative = path.relative_to(boundary).as_posix()
         installer.safe_project_path(boundary, relative, allow_leaf_symlink=allow_leaf_symlink)
         return path
@@ -304,6 +311,14 @@ def _transaction(
     from ..shared_infra import _exclusive_project_lock
     from .manifest import IntegrationManifest
 
+    # A caller may already own the journal and exclusive project lock. Reuse
+    # its write observer instead of deadlocking on a second flock of that lock.
+    observer = file_change_observer.get()
+    active_journal = getattr(observer, "__self__", None)
+    if isinstance(active_journal, _FileJournal) and active_journal.root.resolve() == root.resolve():
+        yield
+        return
+
     folders = {
         ".specify/integrations", ".specify/templates", ".specify/scripts",
         ".specify/.gitignore", ".specify/presets", ".specify/extensions",
@@ -343,12 +358,20 @@ def _transaction(
     target_folder = (target_integration.config or {}).get("folder") if target_integration else None
     if target_folder:
         folders.add(target_folder.rstrip("/"))
-    paths = [
-        installer.safe_project_path(
-            root, folder, allow_leaf_symlink=folder in manifest_leaves and folder not in folders
-        )
-        for folder in sorted(folders | manifest_leaves)
-    ]
+    paths = []
+    for folder in sorted(folders | manifest_leaves):
+        try:
+            path = installer.safe_project_path(
+                root, folder, allow_leaf_symlink=folder in manifest_leaves and folder not in folders
+            )
+        except installer.IntegrationInstallError as exc:
+            if folder not in folders or not str(exc).startswith("Symlinked integration path: "):
+                raise
+            # A preexisting symlinked managed root cannot be journaled by
+            # following its destination. Keep it outside the write scopes;
+            # operations which skip it continue, writes still fail closed.
+            continue
+        paths.append(path)
     home_scopes = []
     for key in {*installed_integration_keys(state or {}), target} & BUILTIN_INTEGRATION_KEYS:
         integration = INTEGRATION_REGISTRY[key]
@@ -477,12 +500,33 @@ def external_lifecycle(operation: str):
                         )
                     )
                 )
-                # Built-in upgrades and fresh installs can overwrite owned files
-                # before setup fails. A stray incoming manifest still needs
-                # the install command's existing failed-install cleanup path.
-                if not records and not download and operation != "upgrade" and not (
-                    operation == "install" and key in BUILTIN_INTEGRATION_KEYS
+                # Journal fresh built-in installs and new-target switches to
+                # protect existing user files if setup fails after cleanup.
+                # Orphaned manifests still use the prior cleanup/diagnostics.
+                installed = installed_integration_keys(state or {})
+                switch_without_fallback = (
+                    operation == "switch"
+                    and key in BUILTIN_INTEGRATION_KEYS
+                    and len(installed) == 1
+                    and key not in installed
                     and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
+                )
+                if switch_without_fallback:
+                    from .manifest import IntegrationManifest
+                    from ._helpers import _MANIFEST_READ_ERRORS
+
+                    try:
+                        IntegrationManifest.load(installed[0], root)
+                    except _MANIFEST_READ_ERRORS:
+                        # Existing switch diagnostics explain how to recover an
+                        # unreadable outgoing manifest before any file mutation.
+                        switch_without_fallback = False
+                if not records and not download and operation != "upgrade" and not (
+                    (
+                        operation == "install" and key in BUILTIN_INTEGRATION_KEYS
+                        and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
+                    )
+                    or switch_without_fallback
                 ):
                     return handler(*args, **kwargs)
                 with ExitStack() as stack:
