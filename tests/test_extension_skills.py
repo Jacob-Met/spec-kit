@@ -3349,6 +3349,29 @@ class TestExtensionSkillUnregistration:
         )
         assert not skill_dir.exists()
 
+    @pytest.mark.parametrize("agent", ["bob", "claude"])
+    def test_remove_preserves_unrelated_files_inside_extension_skill(
+        self, project_dir, extension_dir, agent
+    ):
+        """An extension cannot delete files a user added to its skill folder."""
+        _create_init_options(project_dir, ai=agent, ai_skills=True)
+        skills_dir = _create_skills_dir(project_dir, ai=agent)
+        manager = ExtensionManager(project_dir)
+        manifest = manager.install_from_directory(
+            extension_dir, "0.1.0", register_commands=False
+        )
+        skill_dir = skills_dir / "speckit-test-ext-hello"
+        assert (skill_dir / "SKILL.md").exists()
+        notes = skill_dir / "personal" / "notes.md"
+        notes.parent.mkdir()
+        notes.write_text("Keep my project notes.\n", encoding="utf-8")
+
+        assert manager.remove(manifest.id, keep_config=False)
+
+        assert notes.read_text(encoding="utf-8") == "Keep my project notes.\n"
+        assert not (skill_dir / "SKILL.md").exists()
+        assert not (skills_dir / "speckit-test-ext-world").exists()
+
     def test_skills_removed_on_extension_remove(self, skills_project, extension_dir):
         """Removing an extension should clean up its skill directories."""
         project_dir, skills_dir = skills_project

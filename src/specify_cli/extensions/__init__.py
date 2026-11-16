@@ -2193,7 +2193,7 @@ class ExtensionManager:
                 every configured agent's skills directory is scanned
                 instead of resolving just the currently active one.
         """
-        from ..integrations._file_changes import changing_file, unlink
+        from ..integrations._file_changes import unlink
 
         generic_roots = {
             Path(path).parent.parent
@@ -2227,8 +2227,14 @@ class ExtensionManager:
                     except OSError:
                         pass
                     continue
-            with changing_file(skill_subdir, removal=True):
-                shutil.rmtree(skill_subdir)
+            # Only SKILL.md belongs to this extension.  Supplemental skill
+            # directories may also contain files added by the user; removing
+            # the entire directory loses those files on remove or update.
+            unlink(skill_file)
+            try:
+                skill_subdir.rmdir()
+            except OSError:
+                pass  # Preserve directories containing user-owned files.
 
     def _extension_owned_skill_names(
         self, skill_names: List[str], extension_id: str
