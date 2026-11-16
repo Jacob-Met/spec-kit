@@ -612,6 +612,7 @@ class PresetResolver:
                         "path": candidate,
                         "source": f"{pack_id} v{version}",
                         "strategy": strategy,
+                        "preset_id": pack_id,
                     })
 
         # Priority 3: Extension-provided templates (always "replace")
