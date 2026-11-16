@@ -239,3 +239,41 @@ def test_failed_installed_builtin_switch_restores_shared_templates(
     for path, content in previous.items():
         assert path.read_bytes() == content, f"{path.name} changed after failed refresh"
     assert user_file.read_bytes() == b"User-owned template note"
+
+
+def test_failed_switch_with_another_installed_integration_restores_original_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed new-target switch cannot delete the default just because a fallback exists."""
+    project = _init_project(tmp_path, "claude")
+    installed = _run_in_project(project, ["integration", "install", "codex", "--script", "sh"])
+    assert installed.exit_code == 0, installed.output
+
+    state = project / ".specify/integration.json"
+    claude_manifest = IntegrationManifest.load("claude", project)
+    codex_manifest = IntegrationManifest.load("codex", project)
+    default_file = project / next(
+        item for item in claude_manifest.files if item.startswith(".claude/")
+    )
+    other_file = project / next(
+        item for item in codex_manifest.files if (project / item).is_file()
+    )
+    user_file = project / ".claude/commands/my-notes.md"
+    user_file.parent.mkdir(parents=True, exist_ok=True)
+    user_file.write_bytes(b"Do not remove this note")
+    prior = {p: p.read_bytes() for p in (
+        state, claude_manifest.manifest_path, codex_manifest.manifest_path,
+        default_file, other_file, user_file,
+    )}
+    partial = project / ".github/agents/speckit-switch-partial.agent.md"
+
+    def fail_after_partial_install(project_root, new_manifest, **kwargs):
+        new_manifest.record_file(partial.relative_to(project_root), b"PARTIAL")
+        raise RuntimeError("injected target setup error")
+
+    monkeypatch.setattr(get_integration("copilot"), "setup", fail_after_partial_install)
+    result = _run_in_project(project, ["integration", "switch", "copilot", "--script", "sh"])
+    assert result.exit_code != 0, result.output
+    for path, before in prior.items():
+        assert path.read_bytes() == before, f"Failed switch changed {path.relative_to(project)}"
+    assert not partial.exists()

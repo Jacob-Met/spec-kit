@@ -315,7 +315,11 @@ def _transaction(
     # its write observer instead of deadlocking on a second flock of that lock.
     observer = file_change_observer.get()
     active_journal = getattr(observer, "__self__", None)
-    if isinstance(active_journal, _FileJournal) and active_journal.root.resolve() == root.resolve():
+    if (
+        isinstance(_FileJournal, type)
+        and isinstance(active_journal, _FileJournal)
+        and active_journal.root.resolve() == root.resolve()
+    ):
         yield
         return
 
@@ -509,23 +513,23 @@ def external_lifecycle(operation: str):
                 # protect existing user files if setup fails after cleanup.
                 # Orphaned manifests still use the prior cleanup/diagnostics.
                 installed = installed_integration_keys(state or {})
-                switch_without_fallback = (
+                switch_new_target = (
                     operation == "switch"
                     and key in BUILTIN_INTEGRATION_KEYS
-                    and len(installed) == 1
+                    and bool(installed)
                     and key not in installed
                     and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
                 )
-                if switch_without_fallback:
+                if switch_new_target:
                     from ._helpers import _MANIFEST_READ_ERRORS
                     from .manifest import IntegrationManifest
 
                     try:
-                        IntegrationManifest.load(installed[0], root)
+                        IntegrationManifest.load(default_integration_key(state or {}) or installed[0], root)
                     except _MANIFEST_READ_ERRORS:
                         # Existing switch diagnostics explain how to recover an
                         # unreadable outgoing manifest before any file mutation.
-                        switch_without_fallback = False
+                        switch_new_target = False
                 # Switching an installed built-in can still rewrite shared
                 # templates or metadata, even without a setup/teardown phase.
                 # Those writes need the same rollback as a fresh switch.
@@ -544,7 +548,7 @@ def external_lifecycle(operation: str):
                         operation == "install" and key in BUILTIN_INTEGRATION_KEYS
                         and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
                     )
-                    or switch_without_fallback
+                    or switch_new_target
                     or switch_installed_with_updates
                 ):
                     return handler(*args, **kwargs)
