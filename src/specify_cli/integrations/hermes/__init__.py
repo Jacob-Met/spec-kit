@@ -19,7 +19,12 @@ from typing import Any
 
 import yaml
 
-from ..base import IntegrationOption, SkillsIntegration, yaml_quote
+from ..._assets import get_speckit_version
+from ..base import (
+    IntegrationOption,
+    SkillsIntegration,
+    _render_builtin_skill_frontmatter,
+)
 from ..manifest import IntegrationManifest
 
 
@@ -114,6 +119,7 @@ class HermesIntegration(SkillsIntegration):
         global_skills_dir.mkdir(parents=True, exist_ok=True)
 
         created: list[Path] = []
+        version = get_speckit_version()
 
         for src_file in templates:
             raw = src_file.read_text(encoding="utf-8")
@@ -184,21 +190,9 @@ class HermesIntegration(SkillsIntegration):
             if not description:
                 description = f"Spec Kit: {command_name} workflow"
 
-            # Build SKILL.md with manually formatted frontmatter. yaml_quote
-            # escapes newlines and control characters that a plain quoted
-            # f-string cannot carry.
-            skill_content = (
-                f"---\n"
-                f"name: {yaml_quote(skill_name)}\n"
-                f"description: {yaml_quote(description)}\n"
-                f"compatibility: "
-                f"{yaml_quote('Requires spec-kit project structure with .specify/ directory')}\n"
-                f"metadata:\n"
-                f"  author: {yaml_quote('github-spec-kit')}\n"
-                f"  source: {yaml_quote('templates/commands/' + src_file.name)}\n"
-                f"---\n"
-                f"{processed_body}"
-            )
+            skill_content = _render_builtin_skill_frontmatter(
+                skill_name, description, src_file, version
+            ) + processed_body
 
             skill_content = self.post_process_skill_content(skill_content)
 

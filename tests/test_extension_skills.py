@@ -490,6 +490,7 @@ class TestExtensionSkillRegistration:
             frontmatter = yaml.safe_load(content.split("---", 2)[1])
             assert frontmatter["metadata"]["author"] == expected_author
             assert "test-ext" in frontmatter["metadata"]["source"]
+            assert frontmatter["metadata"]["version"] == "1.0.0"
 
     def test_skill_md_has_parseable_yaml(self, skills_project, extension_dir):
         """Generated SKILL.md should contain valid, parseable YAML frontmatter."""

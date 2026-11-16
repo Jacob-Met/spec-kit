@@ -40,6 +40,7 @@ class TestPresetSkills(PresetArtifactTestHelpers):
         assert skill_file.exists()
         content = skill_file.read_text()
         assert "preset:self-test" in content, "Skill should reference preset source"
+        assert yaml.safe_load(content.split("---", 2)[1])["metadata"]["version"] == "1.0.0"
         assert "disable-model-invocation: false" in content
 
         # Verify it was recorded in registry, keyed by the active agent
@@ -538,6 +539,11 @@ class TestPresetSkills(PresetArtifactTestHelpers):
         assert "description: CORE-FRONTMATTER-DESCRIPTION" in content
         assert "Break down implementation plans into actionable task lists." not in content
         assert "source: templates/commands/tasks.md" in content
+        from specify_cli._assets import get_speckit_version
+        assert (
+            yaml.safe_load(content.split("---", 2)[1])["metadata"]["version"]
+            == get_speckit_version()
+        )
         assert "core tasks body" in content
 
     def test_override_skill_reconcile_uses_override_command_description(self, project_dir, temp_dir):
@@ -937,6 +943,7 @@ class TestPresetSkills(PresetArtifactTestHelpers):
         assert "# Fakeext Cmd Skill" in content
 
         assert yaml.safe_load(content.split("---", 2)[1])["metadata"]["author"] == "acme-corp"
+        assert yaml.safe_load(content.split("---", 2)[1])["metadata"]["version"] == "1.0.0"
 
     def test_skill_composed_over_extension_base_rewrites_subdir_paths(
         self, project_dir, temp_dir

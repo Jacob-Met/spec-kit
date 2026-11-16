@@ -23,6 +23,22 @@ from ._utils import relative_extension_path_violation
 from .integrations._registration import project_registration
 
 
+class _QuotedVersion(str):
+    """A version string that YAML serializers always render in double quotes."""
+
+
+def _represent_quoted_version(dumper, value):
+    return dumper.represent_scalar(
+        "tag:yaml.org,2002:str", str(value), style='"'
+    )
+
+
+# Both serializers are used for generated skills: registrar outputs use
+# yaml.dump while extension/preset paths use yaml.safe_dump.
+yaml.add_representer(_QuotedVersion, _represent_quoted_version, Dumper=yaml.Dumper)
+yaml.add_representer(_QuotedVersion, _represent_quoted_version, Dumper=yaml.SafeDumper)
+
+
 def _build_agent_configs() -> dict[str, Any]:
     """Derive CommandRegistrar.AGENT_CONFIGS from INTEGRATION_REGISTRY."""
     from specify_cli.integrations import INTEGRATION_REGISTRY
@@ -408,6 +424,7 @@ class CommandRegistrar:
         project_root: Path,
         extension_id: Optional[str] = None,
         author: object = "github-spec-kit",
+        version: object = None,
     ) -> str:
         """Render a command override as a SKILL.md file.
 
@@ -439,6 +456,7 @@ class CommandRegistrar:
             description,
             f"{source_id}:{source_file}",
             author=author,
+            version=version,
         )
         return self.render_frontmatter(skill_frontmatter) + "\n" + body
 
@@ -449,6 +467,7 @@ class CommandRegistrar:
         description: str,
         source: str,
         author: object = "github-spec-kit",
+        version: object = None,
     ) -> dict:
         """Build consistent SKILL.md frontmatter across all skill generators."""
         normalized_author = (
@@ -463,6 +482,8 @@ class CommandRegistrar:
                 "source": source,
             },
         }
+        if version not in (None, "", "unknown"):
+            skill_frontmatter["metadata"]["version"] = _QuotedVersion(version)
         return skill_frontmatter
 
     @staticmethod
@@ -651,6 +672,7 @@ class CommandRegistrar:
         link_outputs: bool = False,
         extension_id: Optional[str] = None,
         author: object = "github-spec-kit",
+        version: object = None,
     ) -> List[str]:
         """Register commands for a specific agent.
 
@@ -838,6 +860,7 @@ class CommandRegistrar:
                     project_root,
                     extension_id=extension_id,
                     author=author,
+                    version=version,
                 )
             elif agent_config["format"] == "markdown":
                 body = self.resolve_skill_placeholders(
@@ -930,6 +953,7 @@ class CommandRegistrar:
                             project_root,
                             extension_id=extension_id,
                             author=author,
+                            version=version,
                         )
                     elif agent_config["format"] == "markdown":
                         alias_output = self.render_markdown_command(
@@ -964,6 +988,7 @@ class CommandRegistrar:
                             project_root,
                             extension_id=extension_id,
                             author=author,
+                            version=version,
                         )
 
                 alias_file = (
@@ -1122,6 +1147,7 @@ class CommandRegistrar:
         extension_id: Optional[str] = None,
         only_agent: Optional[str] = None,
         author: object = "github-spec-kit",
+        version: object = None,
     ) -> Dict[str, List[str]]:
         """Register commands for all detected agents in the project.
 
@@ -1248,6 +1274,7 @@ class CommandRegistrar:
                         link_outputs=link_outputs,
                         extension_id=extension_id,
                         author=author,
+                        version=version,
                     )
                     if registered:
                         results[agent_name] = registered

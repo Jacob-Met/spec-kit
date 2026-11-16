@@ -2019,6 +2019,29 @@ class YamlIntegration(IntegrationBase):
 # ---------------------------------------------------------------------------
 
 
+def _render_builtin_skill_frontmatter(
+    skill_name: str, description: str, source_file: Path, version: object
+) -> str:
+    """Shared header for project-local and Hermes-global built-in skills."""
+    version_line = (
+        f"  version: {yaml_quote(str(version))}\n"
+        if version not in (None, "", "unknown")
+        else ""
+    )
+    return (
+        f"---\n"
+        f"name: {yaml_quote(skill_name)}\n"
+        f"description: {yaml_quote(description)}\n"
+        f"compatibility: "
+        f"{yaml_quote('Requires spec-kit project structure with .specify/ directory')}\n"
+        f"metadata:\n"
+        f"  author: {yaml_quote('github-spec-kit')}\n"
+        f"  source: {yaml_quote('templates/commands/' + source_file.name)}\n"
+        f"{version_line}"
+        f"---\n"
+    )
+
+
 class SkillsIntegration(IntegrationBase):
     """Concrete base for integrations that install commands as agent skills.
 
@@ -2200,6 +2223,11 @@ class SkillsIntegration(IntegrationBase):
         )
         created: list[Path] = []
 
+        # Skills from one installation share the generating Spec Kit version.
+        from .._assets import get_speckit_version
+
+        version = get_speckit_version()
+
         for src_file in templates:
             raw = src_file.read_text(encoding="utf-8")
 
@@ -2270,20 +2298,9 @@ class SkillsIntegration(IntegrationBase):
             if not description:
                 description = f"Spec Kit: {command_name} workflow"
 
-            # Build SKILL.md with manually formatted frontmatter (stable
-            # double-quoted values). yaml_quote escapes newlines and control
-            # characters that a plain quoted f-string cannot carry.
-            skill_content = (
-                f"---\n"
-                f"name: {yaml_quote(skill_name)}\n"
-                f"description: {yaml_quote(description)}\n"
-                f"compatibility: {yaml_quote('Requires spec-kit project structure with .specify/ directory')}\n"
-                f"metadata:\n"
-                f"  author: {yaml_quote('github-spec-kit')}\n"
-                f"  source: {yaml_quote('templates/commands/' + src_file.name)}\n"
-                f"---\n"
-                f"{processed_body}"
-            )
+            skill_content = _render_builtin_skill_frontmatter(
+                skill_name, description, src_file, version
+            ) + processed_body
 
             skill_content = self.post_process_skill_content(skill_content)
 
