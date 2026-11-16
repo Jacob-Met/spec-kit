@@ -9,6 +9,7 @@ command files into agent-specific directories in the correct format.
 import hashlib
 import os
 import re
+import warnings
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -623,6 +624,69 @@ class CommandRegistrar:
         return hashes.get(relative) == hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
+    def _native_skill_owned_output(
+        path: Path, source_id: str, source_dir: Path, agent_name: str, output_name: str
+    ) -> bool:
+        """Do not replace a user's native skill at an extension's output path."""
+        if path.is_symlink():
+            # An older --dev install may point into the original extension's
+            # cache, before it was copied into .specify/extensions/<id>.
+            # Recognize that generated cache layout only when its source
+            # manifest agrees with the installed source; unrelated links stay.
+            try:
+                target = path.resolve()
+                if target.name != "SKILL.md" or target.parent.name != output_name:
+                    return False
+                cache_group = target.parent.parent
+                if cache_group.name == "extension-skills":
+                    dev_root = cache_group.parent
+                elif (
+                    cache_group.name == agent_name
+                    and cache_group.parent.name == "agent-commands"
+                ):
+                    dev_root = cache_group.parent.parent
+                else:
+                    return False
+                if dev_root.name != ".specify-dev":
+                    return False
+                original_source = dev_root.parent
+                if original_source.resolve() == source_dir.resolve():
+                    return True
+                for manifest_name in ("extension.yml", "preset.yml"):
+                    original = original_source / manifest_name
+                    installed = source_dir / manifest_name
+                    if (
+                        original.is_file()
+                        and installed.is_file()
+                        and original.read_bytes() == installed.read_bytes()
+                    ):
+                        return True
+            except (OSError, RuntimeError):
+                pass
+            return False
+        if not path.is_file() or path.stat().st_nlink > 1:
+            return False
+        try:
+            frontmatter, _ = CommandRegistrar.parse_frontmatter(
+                path.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError):
+            return False
+        metadata = frontmatter.get("metadata") if isinstance(frontmatter, dict) else None
+        source = metadata.get("source") if isinstance(metadata, dict) else None
+        if not isinstance(source, str):
+            return False
+        if source.startswith(f"{source_id}:") or source == f"preset:{source_id}":
+            return True
+        # Presets deliberately replace shipped core commands; these have a
+        # distinct source marker rather than an extension/preset identifier.
+        if (source_dir / "preset.yml").is_file() and output_name.startswith("speckit-"):
+            core_name = output_name[len("speckit-"):]
+            if source == f"templates/commands/{core_name}.md":
+                return True
+        return False
+
+    @staticmethod
     def _same_lexical_path(left: Path, right: Path) -> bool:
         """Compare paths after lexical normalization without resolving symlinks."""
         return os.path.normcase(os.path.normpath(os.fspath(left))) == os.path.normcase(
@@ -772,8 +836,6 @@ class CommandRegistrar:
             try:
                 content = source_file.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
-                import warnings
-
                 warnings.warn(
                     f"Skipping command '{cmd_name}': could not read source file "
                     f"'{cmd_file}' ({exc.__class__.__name__}: {exc}).",
@@ -894,7 +956,24 @@ class CommandRegistrar:
 
             dest_file = commands_dir / f"{output_name}{agent_config['extension']}"
             self._ensure_inside(dest_file, commands_dir)
-            if agent_name == "generic" and (dest_file.exists() or dest_file.is_symlink()):
+            if agent_config["extension"] == "/SKILL.md" and (
+                dest_file.exists() or dest_file.is_symlink()
+            ):
+                if not self._native_skill_owned_output(
+                    dest_file, source_id, source_dir, agent_name, output_name
+                ):
+                    # Preset layers commonly share the same skill output and
+                    # reconcile their priority afterward. Only report a
+                    # collision for extension installs, where it is actionable.
+                    if extension_id:
+                        warnings.warn(
+                            f"Skipping {agent_name} skill '{output_name}': {dest_file} "
+                            "already exists and is not owned by this source; "
+                            "move or rename the existing skill to install this command.",
+                            stacklevel=2,
+                        )
+                    continue
+            elif agent_name == "generic" and (dest_file.exists() or dest_file.is_symlink()):
                 if not self._generic_owned_output(dest_file, source_id, project_root):
                     continue
             dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -981,7 +1060,21 @@ class CommandRegistrar:
                     commands_dir / f"{alias_output_name}{agent_config['extension']}"
                 )
                 self._ensure_inside(alias_file, commands_dir)
-                if agent_name == "generic" and (alias_file.exists() or alias_file.is_symlink()):
+                if agent_config["extension"] == "/SKILL.md" and (
+                    alias_file.exists() or alias_file.is_symlink()
+                ):
+                    if not self._native_skill_owned_output(
+                        alias_file, source_id, source_dir, agent_name, alias_output_name
+                    ):
+                        if extension_id:
+                            warnings.warn(
+                                f"Skipping {agent_name} skill '{alias_output_name}': "
+                                f"{alias_file} already exists and is not owned by this "
+                                "source; move or rename the existing skill to use this alias.",
+                                stacklevel=2,
+                            )
+                        continue
+                elif agent_name == "generic" and (alias_file.exists() or alias_file.is_symlink()):
                     if not self._generic_owned_output(alias_file, source_id, project_root):
                         continue
                 alias_file.parent.mkdir(parents=True, exist_ok=True)
