@@ -1212,3 +1212,17 @@ class TestVibeNoModelInvocationOption:
         assert _skill_frontmatter(skills_dir / "speckit-specify" / "SKILL.md")[
             "disable-model-invocation"
         ] is True
+
+
+
+def test_core_skills_omit_version_when_package_version_is_unknown(tmp_path, monkeypatch):
+    from specify_cli.integrations import get_integration
+    from specify_cli.integrations.manifest import IntegrationManifest
+    monkeypatch.setattr("specify_cli._assets.get_speckit_version", lambda: "unknown")
+    files = get_integration("vibe").setup(tmp_path, IntegrationManifest("vibe", tmp_path))
+    skills = [file for file in files if file.name == "SKILL.md"]
+    assert skills
+    import yaml
+    for file in skills:
+        metadata = yaml.safe_load(file.read_text().split("---", 2)[1])["metadata"]
+        assert "version" not in metadata

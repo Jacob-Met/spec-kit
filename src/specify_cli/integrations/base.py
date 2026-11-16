@@ -2198,6 +2198,13 @@ class SkillsIntegration(IntegrationBase):
             if self.registrar_config
             else "$ARGUMENTS"
         )
+        from .._assets import get_speckit_version
+
+        version = get_speckit_version()
+        version_line = (
+            f"  version: {yaml_quote(version)}\n"
+            if version not in (None, "", "unknown") else ""
+        )
         created: list[Path] = []
 
         for src_file in templates:
@@ -2281,6 +2288,7 @@ class SkillsIntegration(IntegrationBase):
                 f"metadata:\n"
                 f"  author: {yaml_quote('github-spec-kit')}\n"
                 f"  source: {yaml_quote('templates/commands/' + src_file.name)}\n"
+                f"{version_line}"
                 f"---\n"
                 f"{processed_body}"
             )
