@@ -65,7 +65,10 @@ the default integration rescaffolds enabled presets for that integration.
 The generic integration does not register preset command or skill overrides.
 
 With no preset installed, the remaining project overrides, extension
-contributions, and core defaults continue to apply.
+contributions, and core defaults continue to apply. A project override replaces
+the whole selected file and hides all enabled preset layers for that name,
+including `append`/`prepend` changes. `specify preset resolve <name>` warns when
+that happens; merge any required preset changes into the override explicitly.
 
 ## Stacking and composition
 

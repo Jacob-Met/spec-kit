@@ -611,6 +611,7 @@ class PresetResolver:
                     layers.append({
                         "path": candidate,
                         "source": f"{pack_id} v{version}",
+                        "preset_id": pack_id,
                         "strategy": strategy,
                     })
 

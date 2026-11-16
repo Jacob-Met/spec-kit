@@ -116,6 +116,60 @@ class TestPresetResolve:
         assert result.exit_code == 1
         assert "invalid template name" in strip_ansi(result.output)
 
+    def test_project_override_warns_about_hidden_preset_composition(
+        self, temp_dir, project_dir
+    ):
+        """The common plan-template override must not hide enabled packs silently."""
+        self._install(
+            temp_dir, project_dir, pack_id="team-governance", strategy="append"
+        )
+        overrides = project_dir / ".specify" / "templates" / "overrides"
+        overrides.mkdir(parents=True, exist_ok=True)
+        (overrides / "spec-template.md").write_text("# Our version\n")
+
+        result = self._invoke(project_dir, ["preset", "resolve", "spec-template"])
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        output = " ".join(strip_ansi(result.output).split())
+        assert "project override" in output
+        assert "Warning:" in output
+        assert "team-governance" in output
+        assert "append" in output
+        assert "hides enabled preset layers" in output
+
+    def test_project_override_without_preset_has_no_hidden_preset_warning(
+        self, project_dir
+    ):
+        """A legitimate override of the core template is not alarming alone."""
+        overrides = project_dir / ".specify" / "templates" / "overrides"
+        overrides.mkdir(parents=True, exist_ok=True)
+        (overrides / "spec-template.md").write_text("# Our version\n")
+
+        result = self._invoke(project_dir, ["preset", "resolve", "spec-template"])
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        assert "hidden" not in strip_ansi(result.output).lower()
+
+    def test_disabled_preset_is_not_reported_as_hidden(
+        self, temp_dir, project_dir
+    ):
+        """Only enabled presets should trigger an override warning."""
+        manager = self._install(
+            temp_dir, project_dir, pack_id="disabled-pack", strategy="append"
+        )
+        manager.registry.update("disabled-pack", {"enabled": False})
+        overrides = project_dir / ".specify" / "templates" / "overrides"
+        overrides.mkdir(parents=True, exist_ok=True)
+        (overrides / "spec-template.md").write_text("# Our version\n")
+
+        result = self._invoke(project_dir, ["preset", "resolve", "spec-template"])
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        output = strip_ansi(result.output).lower()
+        assert "project override" in output
+        assert "disabled-pack" not in output
+        assert "warning:" not in output
+
     def test_resolve_escapes_layer_path_and_source(self, project_dir):
         """The top-layer path/source lines must render markup literally.
 
