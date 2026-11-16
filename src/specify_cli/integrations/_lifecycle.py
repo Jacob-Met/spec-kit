@@ -477,10 +477,12 @@ def external_lifecycle(operation: str):
                         )
                     )
                 )
-                # Built-in upgrades and installs can overwrite existing files
-                # before setup fails; use the mutation journal for both.
+                # Built-in upgrades and fresh installs can overwrite owned files
+                # before setup fails. A stray incoming manifest still needs
+                # the install command's existing failed-install cleanup path.
                 if not records and not download and operation != "upgrade" and not (
                     operation == "install" and key in BUILTIN_INTEGRATION_KEYS
+                    and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
                 ):
                     return handler(*args, **kwargs)
                 with ExitStack() as stack:
