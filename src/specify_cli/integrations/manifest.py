@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._file_changes import after_file_change, before_file_change
+from ._file_changes import after_file_change, before_file_change, changing_file
 
 OWNERSHIP_MODES = frozenset({"whole", "partial", "shared"})
 
@@ -199,21 +199,25 @@ class IntegrationManifest:
         _validate_ownership_mode(ownership)
         rel = Path(rel_path)
         abs_path = _validate_record_path(rel, self.project_root)
-        before_file_change(abs_path)
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        _ensure_safe_manifest_destination(self.project_root, abs_path)
+        with changing_file(abs_path):
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            _ensure_safe_manifest_destination(self.project_root, abs_path)
 
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-        abs_path.write_bytes(content)
+            if isinstance(content, str):
+                content = content.encode("utf-8")
+            try:
+                abs_path.write_bytes(content)
+            except OSError:
+                # A short write still belongs to this transaction's rollback.
+                after_file_change(abs_path)
+                raise
 
-        normalized = abs_path.relative_to(self.project_root).as_posix()
-        self._files[normalized] = hashlib.sha256(content).hexdigest()
-        self._ownership_modes[normalized] = ownership
-        # ``record_file`` writes *produced* content, so any prior
-        # recovered marker for this path is no longer accurate.
-        self._recovered_files.discard(normalized)
-        after_file_change(abs_path)
+            normalized = abs_path.relative_to(self.project_root).as_posix()
+            self._files[normalized] = hashlib.sha256(content).hexdigest()
+            self._ownership_modes[normalized] = ownership
+            # ``record_file`` writes *produced* content, so any prior
+            # recovered marker for this path is no longer accurate.
+            self._recovered_files.discard(normalized)
         return abs_path
 
     def record_existing(
