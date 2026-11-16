@@ -822,17 +822,41 @@ def test_filter_wiring_errors_are_still_rejections(condition):
 
 
 @pytest.mark.parametrize(
+    "literal,value",
+    [
+        ("1e3", 1000.0),
+        ("1E3", 1000.0),
+        ("-2e+2", -200.0),
+        ("1e-3", 0.001),
+        ("1_2e2", 1200.0),
+        ("1.5E+2", 150.0),
+        ("9007199254740993", 9007199254740993),
+    ],
+)
+def test_exponent_form_numbers_and_exact_integers(literal, value):
+    assert evaluate_expression("{{ " + literal + " }}", StepContext()) == value
+
+
+def test_exponent_numbers_coerce_in_comparisons_like_workflow_inputs():
+    ctx = StepContext(inputs={"n": 5, "numeric_text": "1e3", "other": "-2e+2"})
+    assert evaluate_condition("{{ inputs.n < 1e3 }}", ctx) is True
+    assert evaluate_condition("{{ inputs.numeric_text > 100 }}", ctx) is True
+    assert evaluate_condition("{{ inputs.numeric_text == 1000 }}", ctx) is True
+    assert evaluate_condition("{{ inputs.numeric_text < 900 }}", ctx) is False
+    assert evaluate_condition("{{ inputs.other == -200 }}", ctx) is True
+    # The parser must still reject incomplete exponents, not resolve a path.
+    with pytest.raises(ValueError, match="invalid expression"):
+        evaluate_expression("{{ 1e }}", ctx)
+
+
+@pytest.mark.parametrize(
     "condition,resolvable",
     [
         ("42", True),
         ("3.14", True),
         ("-7", True),
-        # `1e3` has no "." so the evaluator calls int() on it, which fails; it then
-        # falls through to a path lookup and resolves to None. The gate used to
-        # decide this for itself with a float() test that accepted `1e3`, and the
-        # correction turned a truthy condition false. Now the evaluator reaches the
-        # dot-path resolution with `1e3` and reports it, so the two cannot disagree.
-        ("1e3", False),
+        # Exponent-form numbers are literals, including without a decimal dot.
+        ("1e3", True),
         ("'one'", True),
         ('"one"', True),
         # Two literals, not one: the evaluator requires the opening quote's match to
@@ -861,7 +885,6 @@ def test_literal_handling_comes_from_the_evaluator(condition, resolvable):
         # to None however the index is written.
         "inputs[0]",
         "steps[1]",
-        "1e3",
         "'a' 'b'",
     ],
 )

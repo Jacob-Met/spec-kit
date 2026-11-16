@@ -1804,8 +1804,8 @@ class TestExpressions:
     def test_number_literal_forms(self):
         """Every number form the former engine read through ``int()``/``float()``.
 
-        A ``.`` makes a float (exponents need one too, as before); a sign and
-        digit-group underscores are allowed.
+        A decimal point or exponent makes a float; signs and digit-group
+        underscores are allowed. Plain integers remain exact.
         """
         from specify_cli.workflows.expressions import evaluate_expression
         from specify_cli.workflows.base import StepContext
@@ -1815,6 +1815,7 @@ class TestExpressions:
             ("5", 5), ("-5", -5), ("+5", 5), ("1_000", 1000),
             ("0.5", 0.5), (".5", 0.5), ("-.5", -0.5), ("5.", 5.0),
             ("1.5e3", 1500.0), (".5E-1", 0.05), ("1_000.5", 1000.5),
+            ("1e3", 1000.0), ("1E-3", 0.001), ("-2e+3", -2000.0),
         ]:
             result = evaluate_expression("{{ " + text + " }}", ctx)
             assert result == expected and type(result) is type(expected), text
@@ -1822,13 +1823,12 @@ class TestExpressions:
         assert evaluate_expression("{{ [.5, +1] }}", ctx) == [0.5, 1]
 
     def test_malformed_number_literals_are_refused(self):
-        """Forms ``int()``/``float()`` refuse (or, for ``1e3``, the former engine
-        never read as a number) do not lex as one either."""
+        """Malformed forms must not be parsed as partial number literals."""
         import pytest
         from specify_cli.workflows.expressions import evaluate_expression
         from specify_cli.workflows.base import StepContext
 
-        for text in ("1__0", "1_", "1e3", "5..", "."):
+        for text in ("1__0", "1_", "1e", "1e+", "1e--2", "5..", "."):
             with pytest.raises(ValueError, match="invalid expression"):
                 evaluate_expression("{{ " + text + " }}", StepContext(inputs={}))
 
