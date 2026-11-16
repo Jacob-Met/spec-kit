@@ -410,6 +410,95 @@ class TestExtensionManagerGetSkillsDir:
 class TestExtensionSkillRegistration:
     """Test _register_extension_skills() on ExtensionManager."""
 
+    @pytest.mark.parametrize("agent", ["claude", "kimi"])
+    def test_native_skill_registration_does_not_erase_user_skill(
+        self, project_dir, extension_dir, agent
+    ):
+        """A native skill collision must never replace an unowned user SKILL.md."""
+        _create_init_options(project_dir, ai=agent, ai_skills=True)
+        skills_dir = _create_skills_dir(project_dir, ai=agent)
+        skill_dir = skills_dir / "speckit-test-ext-hello"
+        skill_dir.mkdir()
+        user_skill = skill_dir / "SKILL.md"
+        user_skill.write_text("This is my skill, not the extension.\n", encoding="utf-8")
+        notes = skill_dir / "notes.txt"
+        notes.write_text("keep these notes\n", encoding="utf-8")
+
+        manager = ExtensionManager(project_dir)
+        with pytest.warns(UserWarning, match="already exists and is not owned"):
+            manifest = manager.install_from_directory(
+                extension_dir, "0.1.0", register_commands=True
+            )
+        assert user_skill.read_text(encoding="utf-8") == (
+            "This is my skill, not the extension.\n"
+        )
+        assert notes.read_text(encoding="utf-8") == "keep these notes\n"
+        assert (skills_dir / "speckit-test-ext-world" / "SKILL.md").exists()
+
+        assert manager.remove(manifest.id, keep_config=False)
+        assert user_skill.read_text(encoding="utf-8") == (
+            "This is my skill, not the extension.\n"
+        )
+        assert not (skills_dir / "speckit-test-ext-world" / "SKILL.md").exists()
+
+    @pytest.mark.parametrize("agent", ["claude", "codex"])
+    def test_native_skill_collision_preserves_user_symlink(
+        self, project_dir, extension_dir, agent, temp_dir
+    ):
+        _create_init_options(project_dir, ai=agent, ai_skills=True)
+        skills_dir = _create_skills_dir(project_dir, ai=agent)
+        user_dir = skills_dir / "speckit-test-ext-hello"
+        user_dir.mkdir()
+        target = temp_dir / "my-external-skill.md"
+        target.write_text("Personal skill source\n", encoding="utf-8")
+        linked = user_dir / "SKILL.md"
+        try:
+            linked.symlink_to(target)
+        except OSError:
+            pytest.skip("Symlinks unavailable on this filesystem")
+        manager = ExtensionManager(project_dir)
+        manifest = manager.install_from_directory(extension_dir, "0.1.0")
+        assert linked.is_symlink()
+        assert linked.read_text(encoding="utf-8") == "Personal skill source\n"
+        assert manager.remove(manifest.id)
+        assert linked.is_symlink()
+        assert target.read_text(encoding="utf-8") == "Personal skill source\n"
+
+    def test_native_skill_alias_collision_keeps_user_skill(self, project_dir, temp_dir):
+        _create_init_options(project_dir, ai="claude", ai_skills=True)
+        skills_dir = _create_skills_dir(project_dir, ai="claude")
+        alias = "speckit-test-ext-hi"
+        user_dir = skills_dir / alias
+        user_dir.mkdir()
+        user_md = user_dir / "SKILL.md"
+        user_md.write_text("User's alias skill\n", encoding="utf-8")
+        extension = _create_extension_dir_with_aliases(
+            temp_dir, "test-ext", [("hello", ["speckit.test-ext.hi"])]
+        )
+        manager = ExtensionManager(project_dir)
+        with pytest.warns(UserWarning, match="already exists and is not owned"):
+            manifest = manager.install_from_directory(extension, "0.1.0")
+        assert user_md.read_text(encoding="utf-8") == "User's alias skill\n"
+        assert (skills_dir / "speckit-test-ext-hello" / "SKILL.md").is_file()
+        assert manager.remove(manifest.id)
+        assert user_md.read_text(encoding="utf-8") == "User's alias skill\n"
+        assert not (skills_dir / "speckit-test-ext-hello" / "SKILL.md").exists()
+
+    def test_native_registered_skill_refreshes_if_owned(self, project_dir, extension_dir):
+        _create_init_options(project_dir, ai="claude", ai_skills=True)
+        skills_dir = _create_skills_dir(project_dir, ai="claude")
+        manager = ExtensionManager(project_dir)
+        manifest = manager.install_from_directory(extension_dir, "0.1.0")
+        generated = skills_dir / "speckit-test-ext-hello" / "SKILL.md"
+        assert "Run this to say hello." in generated.read_text(encoding="utf-8")
+        source = project_dir / ".specify" / "extensions" / manifest.id / "commands" / "hello.md"
+        source.write_text(
+            "---\ndescription: new version\n---\nUpdated skill body\n",
+            encoding="utf-8",
+        )
+        manager.register_enabled_extensions_for_agent("claude", force=True)
+        assert "Updated skill body" in generated.read_text(encoding="utf-8")
+
     def test_skills_created_when_ai_skills_active(self, skills_project, extension_dir):
         """Skills should be created when ai_skills is enabled."""
         project_dir, skills_dir = skills_project
