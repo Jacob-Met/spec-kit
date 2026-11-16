@@ -1461,3 +1461,150 @@ def test_reinstall_guard_compares_each_component_once(tmp_path: Path, monkeypatc
     # comparison pass); a full scan would be 1275 comparisons for 50 components.
     assert result.changed is False
     assert len(comparisons) <= 2 * len(extension_ids)
+
+
+def test_bundle_transaction_restores_extensions_and_records_after_failures(
+    tmp_path: Path,
+):
+    """Failure on the second updated extension cannot leave a mixed installed state."""
+    import yaml
+
+    from specify_cli import save_init_options
+    from specify_cli.bundles.adapters import DefaultPrimitiveInstaller
+    from specify_cli.extensions import ExtensionManager
+
+    project = tmp_path / "project"
+    make_project(project)
+    (project / ".claude/skills").mkdir(parents=True)
+    save_init_options(project, {"ai": "claude", "ai_skills": True, "script": "sh"})
+
+    artifacts: dict[tuple[str, str], Path] = {}
+    for component_id in ("alpha", "beta"):
+        for version in ("1.0.0", "2.0.0"):
+            package = tmp_path / f"{component_id}-{version}"
+            (package / "commands").mkdir(parents=True)
+            (package / "commands/review.md").write_text(
+                f"---\ndescription: Review\n---\n{component_id} v{version}\n"
+            )
+            (package / "extension.yml").write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": "1.0",
+                        "extension": {
+                            "id": component_id,
+                            "name": component_id,
+                            "version": version,
+                            "description": "Demo",
+                            "author": "Demo",
+                        },
+                        "requires": {"speckit_version": ">=0.1.0"},
+                        "provides": {
+                            "commands": [
+                                {
+                                    "name": f"speckit.{component_id}.review",
+                                    "file": "commands/review.md",
+                                }
+                            ]
+                        },
+                    }
+                )
+            )
+            artifacts[(component_id, version)] = package
+
+    for component_id in ("alpha", "beta"):
+        ExtensionManager(project).install_from_directory(
+            artifacts[(component_id, "1.0.0")], "1.0.0"
+        )
+
+    def bundle_manifest(version: str) -> BundleManifest:
+        data = valid_manifest_dict(
+            provides={
+                "extensions": [
+                    {"id": component_id, "version": version}
+                    for component_id in ("alpha", "beta")
+                ]
+            }
+        )
+        data["bundle"]["version"] = version
+        return BundleManifest.from_dict(data)
+
+    original = bundle_manifest("1.0.0")
+    initial_plan = _plan(original)
+    save_records(
+        project,
+        [
+            InstalledBundleRecord.create(
+                bundle_id=initial_plan.bundle_id,
+                version=initial_plan.version,
+                components=initial_plan.components,
+                required_components=initial_plan.components,
+            )
+        ],
+    )
+    import os
+
+    def disk_state():
+        return {
+            p.relative_to(project).as_posix(): (
+                ("link", os.readlink(p))
+                if p.is_symlink()
+                else ("dir", None)
+                if p.is_dir()
+                else ("file", p.read_bytes())
+            )
+            for p in project.rglob("*")
+        }
+
+    original_files = disk_state()
+
+    class FailAfterSecondRealRefresh(DefaultPrimitiveInstaller):
+        def refresh(self, root, component):
+            ExtensionManager(root).install_from_directory(
+                artifacts[(component.id, "2.0.0")], "1.0.0", force=True
+            )
+            if component.id == "beta":
+                raise BundlerError("injected failure after both extensions changed")
+
+    newer = bundle_manifest("2.0.0")
+    with pytest.raises(BundlerError, match="injected failure after both"):
+        install_bundle(
+            project,
+            _plan(newer),
+            FailAfterSecondRealRefresh(),
+            manifest=newer,
+            refresh=True,
+        )
+
+    assert disk_state() == original_files
+    assert load_records(project)[0].version == "1.0.0"
+    for component_id in ("alpha", "beta"):
+        assert (
+            ExtensionManager(project).registry.get(component_id)["version"] == "1.0.0"
+        )
+
+    class FailAfterSecondRealRemoval(DefaultPrimitiveInstaller):
+        def remove(self, root, component):
+            super().remove(root, component)
+            if component.id == "beta":
+                raise BundlerError("injected failure after both extensions removed")
+
+    with pytest.raises(BundlerError, match="injected failure after both"):
+        remove_bundle(project, initial_plan.bundle_id, FailAfterSecondRealRemoval())
+    assert disk_state() == original_files
+
+    # Even a late registry-record save error must restore every removed package.
+    from specify_cli.bundles import installer as bundle_installer_module
+
+    original_save = bundle_installer_module.save_records
+
+    def fail_after_record_write(root, records):
+        original_save(root, records)
+        raise OSError("injected post-write bundle record failure")
+
+    from pytest import MonkeyPatch
+
+    with MonkeyPatch.context() as patch:
+        patch.setattr(bundle_installer_module, "save_records", fail_after_record_write)
+        with pytest.raises(BundlerError, match="injected post-write"):
+            remove_bundle(project, initial_plan.bundle_id, DefaultPrimitiveInstaller())
+    assert disk_state() == original_files

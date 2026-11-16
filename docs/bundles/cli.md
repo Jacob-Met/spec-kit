@@ -154,11 +154,14 @@ relevant settings. An unpinned refresh cannot replace a version another bundle
 requires at a pin; sharing a matching installed version without refreshing is
 still allowed. See the API reference for requirement comparison rules.
 
-The bundle record advances only after successful installation. On component
-failure, newly installed components are removed on a best-effort basis.
-Rollback removal errors are swallowed, so partial disk state may remain.
-Previously installed components modified or removed during refresh are not
-restored. Initialization is not rolled back either.
+The CLI journals primitive-owned file changes and the installed bundle record
+as one operation. If installation or refresh fails after earlier components
+changed, their previous bytes and record are restored. Conflicting external
+edits are never overwritten: the command reports them and retains recovery
+snapshots for manual reconciliation. Initialization performed before the bundle
+operation is not rolled back. Custom Python `PrimitiveInstaller` adapters that
+do not provide a transaction still use best-effort rollback of newly installed
+components.
 
 ### Packaged patch compatibility
 
@@ -251,9 +254,11 @@ Retained components without a remaining owner transfer to a remaining requiring
 bundle so later removal can clean them up. Independently installed components
 are never adopted.
 
-Removal is not transactional. A component failure can leave a partially
-uninstalled project while the bundle record remains unchanged; the command
-reports the failure and recovery context.
+CLI removal uses the same file journal, restoring removed generated files and
+the previous bundle record if a later component or record write fails. It
+retains recovery snapshots instead of overwriting conflicting external edits.
+Custom Python adapters without a transaction retain their prior best-effort
+behavior and may be left partially uninstalled.
 
 ## List installed bundles
 

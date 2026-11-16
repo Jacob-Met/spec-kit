@@ -83,8 +83,9 @@ Components shared with other bundles remain installed while still needed.
 Repeating an unchanged install preserves existing components and local edits.
 Use `bundle update <id>` for a catalog release, or
 `bundle install <path> --refresh` for a revised local source, to reapply owned
-components. Updates are not a global transaction: changes to components that
-were already installed are not rolled back after a later failure.
+components. CLI updates journal generated file changes and the installed
+record together, restoring prior bytes if a later component fails. External
+conflicts are reported with recovery snapshots rather than overwritten.
 
 ## See also
 
