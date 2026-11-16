@@ -11,6 +11,7 @@ write (FR-018, SC partial-failure-stop).
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -77,13 +78,30 @@ def install_bundle(
     manifest: BundleManifest | None = None,
     refresh: bool = False,
 ) -> InstallResult:
+    """Apply all bundle changes under the primitive's reversible boundary."""
+    transaction = getattr(installer, "transaction", None)
+    reversible = callable(transaction)
+    with transaction(project_root) if reversible else nullcontext():
+        return _install_bundle_impl(
+            project_root, plan, installer, manifest, refresh, reversible=reversible
+        )
+
+
+def _install_bundle_impl(
+    project_root: Path,
+    plan: InstallPlan,
+    installer: PrimitiveInstaller,
+    manifest: BundleManifest | None = None,
+    refresh: bool = False,
+    *,
+    reversible: bool = False,
+) -> InstallResult:
     """Execute *plan*, recording provenance. Idempotent, with bounded rollback.
 
-    Atomicity is scoped, not global: on failure only the components newly
-    installed during *this* call are rolled back, and the provenance record is
-    written solely on full success (a failure records nothing). Components that
-    were already installed beforehand — including those re-applied when *refresh*
-    is True — are never rolled back.
+    The CLI adapter provides a journal around the whole operation, covering
+    previously installed components, new installs, removal, and the bundle
+    record. Custom adapters without that transaction retain the earlier
+    best-effort rollback of only newly installed components.
 
     When *refresh* is True (used by ``specify bundle update``), components that
     are already installed are re-applied through the primitive machinery so they
@@ -112,8 +130,14 @@ def install_bundle(
         if report.has_blocking_conflict:
             raise BundlerError(
                 "; ".join(
-                    [*([report.integration_clash] if report.integration_clash else []),
-                     *report.version_clashes]
+                    [
+                        *(
+                            [report.integration_clash]
+                            if report.integration_clash
+                            else []
+                        ),
+                        *report.version_clashes,
+                    ]
                 )
             )
 
@@ -152,9 +176,11 @@ def install_bundle(
             "to refresh owned components before advancing the installed record."
         )
 
-    prior_ours = {
-        (c.kind, c.id) for c in existing.contributed_components
-    } if existing is not None else set()
+    prior_ours = (
+        {(c.kind, c.id) for c in existing.contributed_components}
+        if existing is not None
+        else set()
+    )
     # Components already attributed to a *different* installed bundle: these are
     # legitimately shareable (refcounted on removal), so this bundle may also
     # claim them. A component that is installed on disk but tracked by no bundle
@@ -180,10 +206,18 @@ def install_bundle(
     done: list[ComponentRef] = []
     installed_versions: dict[str, str] = {}
     try:
-        result.warnings.extend(_check_installed_pins(
-            project_root, plan, installer, prior_ours, other_tracked,
-            other_pins, other_requirements, refresh=refresh,
-        ))
+        result.warnings.extend(
+            _check_installed_pins(
+                project_root,
+                plan,
+                installer,
+                prior_ours,
+                other_tracked,
+                other_pins,
+                other_requirements,
+                refresh=refresh,
+            )
+        )
         for component in plan.components:
             key = (component.kind, component.id)
             if installer.is_installed(project_root, component):
@@ -238,10 +272,14 @@ def install_bundle(
                 if actual is not None:
                     installed_versions[f"{component.kind}:{component.id}"] = actual
     except BundlerError:
-        _rollback(project_root, installer, done)
+        # The real CLI adapter journals the whole operation; do not run a
+        # second destructive cleanup that could lose user-authored data.
+        if not reversible:
+            _rollback(project_root, installer, done)
         raise
     except Exception as exc:
-        _rollback(project_root, installer, done)
+        if not reversible:
+            _rollback(project_root, installer, done)
         raise BundlerError(
             f"Failed to install bundle '{plan.bundle_id}': {exc}. "
             "No changes were recorded."
@@ -267,7 +305,8 @@ def install_bundle(
         updated = transfer_contributions(
             updated,
             [
-                component for component in existing.contributed_components
+                component
+                for component in existing.contributed_components
                 if (component.kind, component.id) not in planned
             ],
         )
@@ -279,6 +318,22 @@ def remove_bundle(
     project_root: Path,
     bundle_id: str,
     installer: PrimitiveInstaller,
+) -> InstallResult:
+    """Remove a bundle with the same recovery boundary when supported."""
+    transaction = getattr(installer, "transaction", None)
+    reversible = callable(transaction)
+    with transaction(project_root) if reversible else nullcontext():
+        return _remove_bundle_impl(
+            project_root, bundle_id, installer, reversible=reversible
+        )
+
+
+def _remove_bundle_impl(
+    project_root: Path,
+    bundle_id: str,
+    installer: PrimitiveInstaller,
+    *,
+    reversible: bool = False,
 ) -> InstallResult:
     """Remove a bundle, uninstalling only components no other bundle still needs."""
     records = load_records(project_root)
@@ -305,6 +360,10 @@ def remove_bundle(
         )
         save_records(project_root, remaining)
     except Exception as exc:
+        if reversible:
+            # The outer transaction restores the changed packages and record.
+            # The old partial-removal warning would be misleading here.
+            raise BundlerError(f"Failed to remove bundle '{bundle_id}': {exc}") from exc
         if result.uninstalled:
             detail = (
                 f"{len(result.uninstalled)} component(s) were already removed "
@@ -375,7 +434,8 @@ def _check_installed_pins(
                 installed = installer.is_installed(project_root, component)
                 actual = (
                     installer.installed_version(project_root, component)
-                    if installed else None
+                    if installed
+                    else None
                 )
                 if (
                     (refresh and key in prior_ours)

@@ -3497,6 +3497,7 @@ class ExtensionManager:
             registered_skills = []
 
         extension_dir = self.extensions_dir / extension_id
+        from ..integrations._file_changes import changing_file
 
         # Unregister commands from all AI agents
         if registered_commands:
@@ -3527,23 +3528,26 @@ class ExtensionManager:
                         or child.name.endswith("-config.local.yml")
                     ):
                         continue
-                    if child.is_dir():
-                        shutil.rmtree(child)
-                    else:
-                        child.unlink()
+                    with changing_file(child, removal=True):
+                        if child.is_dir():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
                 # Write a provenance marker so install_from_directory can
                 # distinguish this --keep-config leftover from a directory left
                 # by a partially-failed install (which must not have its
                 # packaged default configs treated as user-preserved data).
                 # Content is intentionally empty — only presence matters.
-                (extension_dir / ".keep-config").write_text("")
+                with changing_file(extension_dir / ".keep-config"):
+                    (extension_dir / ".keep-config").write_text("")
         else:
             # Backup config files before deleting
             if extension_dir.exists():
                 # Use subdirectory per extension to avoid name accumulation
                 # (e.g., jira-jira-config.yml on repeated remove/install cycles)
                 backup_dir = self.extensions_dir / ".backup" / extension_id
-                backup_dir.mkdir(parents=True, exist_ok=True)
+                with changing_file(backup_dir):
+                    backup_dir.mkdir(parents=True, exist_ok=True)
 
                 # Backup both primary and local override config files
                 config_files = list(extension_dir.glob("*-config.yml")) + list(
@@ -3551,11 +3555,13 @@ class ExtensionManager:
                 )
                 for config_file in config_files:
                     backup_path = backup_dir / config_file.name
-                    shutil.copy2(config_file, backup_path)
+                    with changing_file(backup_path):
+                        shutil.copy2(config_file, backup_path)
 
             # Remove extension directory
             if extension_dir.exists():
-                shutil.rmtree(extension_dir)
+                with changing_file(extension_dir, removal=True):
+                    shutil.rmtree(extension_dir)
 
         # Unregister hooks
         hook_executor = HookExecutor(self.project_root)

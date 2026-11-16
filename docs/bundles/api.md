@@ -223,9 +223,11 @@ pins. A successful reinstall/refresh records the full requirements. Missing
 records are treated as no bundles, but malformed records and incompatible
 schema major versions are errors, not an empty installation.
 
-Record writes happen after successful component operations. They do not make
-installation, update, refresh, or removal globally transactional; see the CLI
-reference for failure and rollback boundaries.
+Record writes happen after successful component operations. The real CLI
+`DefaultPrimitiveInstaller` exposes a reversible file transaction that covers
+component changes and the record together. Custom `PrimitiveInstaller`
+implementations may omit that hook and use best-effort rollback; see the CLI
+reference for failure and recovery boundaries.
 
 ## See also
 

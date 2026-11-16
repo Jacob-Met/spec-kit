@@ -392,6 +392,12 @@ class DefaultPrimitiveInstaller:
         manager = self._manager_for(component, project_root)
         manager.remove(component)
 
+    def transaction(self, project_root: Path):
+        """Stage all primitive and provenance changes under one recovery boundary."""
+        from ._transaction import bundle_file_transaction
+
+        return bundle_file_transaction(project_root)
+
     def _manager_for(self, component: ComponentRef, project_root: Path):
         # Lazy import to avoid import cycles and keep startup cheap (Principle IV).
         from .primitives import primitive_manager
