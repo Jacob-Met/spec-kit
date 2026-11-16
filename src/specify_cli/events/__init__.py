@@ -2253,14 +2253,9 @@ def _remove_toml_entries(dst: Path) -> bool:
     )
     if cleaned == existing:
         return False
-    # Stripping removed a Specify-owned block. If only whitespace/comments
-    # remain, the file had no user content — delete it rather than leaving
-    # an empty stub that confuses uninstall.
-    stripped = "\n".join(
-        line for line in cleaned.splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    )
-    if not stripped:
+    # A user may leave notes without other TOML entries. Delete only when
+    # removing the managed block leaves whitespace, not user comments.
+    if not cleaned.strip():
         _unlink_file(dst, missing_ok=True)
         return True
     _write_text(dst, cleaned, encoding="utf-8")

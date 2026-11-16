@@ -1190,6 +1190,25 @@ class TestTomlNoOpMerge:
         assert config_path.stat().st_mtime_ns == mtime_before
         manifest.record_existing.assert_not_called()
 
+    def test_teardown_keeps_user_comments_after_owned_codex_hooks(self, tmp_path):
+        """Comments left behind by removing owned hooks are not an empty stub."""
+        from specify_cli.integrations.codex import CodexIntegration
+
+        integration = CodexIntegration()
+        manifest = _claude_manifest(tmp_path)
+        install_integration_events(
+            integration, tmp_path, manifest,
+            {"pre_tool_use": [{"command": "speckit.tdd.validate"}]},
+        )
+        config_path = tmp_path / ".codex" / "config.toml"
+        config_path.write_bytes(config_path.read_bytes() + b"\n# keep my notes\n")
+
+        remove_integration_events(integration, tmp_path, manifest)
+
+        assert config_path.is_file()
+        assert b"# keep my notes" in config_path.read_bytes()
+        assert b"speckit_marker" not in config_path.read_bytes()
+
     def test_owned_only_config_still_deleted_on_teardown(self, tmp_path):
         """The unchanged-content guard must not defeat the existing cleanup:
         when the file contains only a Specify-owned block that teardown
