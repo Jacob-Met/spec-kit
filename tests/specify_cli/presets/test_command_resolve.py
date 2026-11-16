@@ -214,3 +214,45 @@ class TestPresetResolve:
         assert "Composition chain" in output, output
         assert "[base]" in output, output
         assert "[append]" in output, output
+
+    def test_project_override_warns_when_it_hides_enabled_preset_layers(
+        self, temp_dir, project_dir
+    ):
+        self._install(
+            temp_dir, project_dir, strategy="append", pack_id="policy-pack", priority=5
+        )
+        self._install(
+            temp_dir, project_dir, strategy="prepend", pack_id="security-pack",
+            priority=10,
+        )
+        override = (
+            project_dir / ".specify/templates/overrides/spec-template.md"
+        )
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text("# Local override\n")
+
+        result = self._invoke(project_dir, ["preset", "resolve", "spec-template"])
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        output = " ".join(strip_ansi(result.output).split())
+        assert "project override" in output
+        assert "Warning: project override hides preset changes" in output
+        assert "policy-pack v1.0.0 (append)" in output
+        assert "security-pack v1.0.0 (prepend)" in output
+        assert "Remove the project override" in output
+
+    def test_project_override_without_presets_has_no_spurious_warning(
+        self, project_dir
+    ):
+        override = (
+            project_dir / ".specify/templates/overrides/spec-template.md"
+        )
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text("# Local override\n")
+
+        result = self._invoke(project_dir, ["preset", "resolve", "spec-template"])
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        output = strip_ansi(result.output)
+        assert "project override" in output
+        assert "Warning: project override hides" not in output

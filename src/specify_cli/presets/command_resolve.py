@@ -56,6 +56,22 @@ def preset_resolve(
             f"{_escape_markup(str(display_layer['source']))})[/dim]"
         )
 
+        if display_layer["source"] == "project override":
+            hidden_presets = [
+                layer for layer in layers[1:] if layer.get("preset_id")
+            ]
+            if hidden_presets:
+                details = ", ".join(
+                    f"{_escape_markup(str(layer['source']))} "
+                    f"({_escape_markup(str(layer['strategy']))})"
+                    for layer in hidden_presets
+                )
+                console.print(
+                    "    [yellow]Warning: project override hides preset changes "
+                    f"from {details}. Remove the project override to restore "
+                    "preset composition.[/yellow]"
+                )
+
         has_composition = layers[0]["strategy"] != "replace" and any(
             layer["strategy"] != "replace" for layer in layers
         )
