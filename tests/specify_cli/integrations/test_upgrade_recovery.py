@@ -127,3 +127,25 @@ def test_partial_failed_write_restores_bytes(
     assert (target.read_bytes() if target.exists() else None) == before, result.output
     assert user_file.read_bytes() == b"Personal note: do not remove"
     assert manifest.manifest_path.read_bytes() == manifest_before
+
+
+def test_failed_builtin_secondary_install_preserves_user_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsuccessful install cannot discard an existing unrelated user file."""
+    project = _init_project(tmp_path, "claude")
+    target = project / ".agents/skills/speckit-plan/SKILL.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"My personal prompt")
+    state_path = project / ".specify/integration.json"
+    state_bytes = state_path.read_bytes()
+
+    def partial_then_fail(project_root, new_manifest, **kwargs):
+        new_manifest.record_file(target.relative_to(project_root), b"PARTIAL")
+        raise RuntimeError("probe: secondary installation failed during setup")
+
+    monkeypatch.setattr(get_integration("codex"), "setup", partial_then_fail)
+    result = _run_in_project(project, ["integration", "install", "codex", "--force", "--script", "sh"])
+    assert result.exit_code != 0
+    assert target.read_bytes() == b"My personal prompt", result.output
+    assert state_path.read_bytes() == state_bytes, result.output
