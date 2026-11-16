@@ -1096,43 +1096,30 @@ class TestIntegrationSwitch:
         data = json.loads((project / ".specify" / "integration.json").read_text(encoding="utf-8"))
         assert data["integration"] == "claude"
 
-    def test_failed_switch_keeps_fallback_metadata_consistent(self, tmp_path):
+    def test_failed_switch_preserves_existing_default_and_metadata(self, tmp_path):
         project = _init_project(tmp_path, "claude")
-        old_cwd = os.getcwd()
-        try:
-            os.chdir(project)
-            install = runner.invoke(app, [
-                "integration", "install", "codex",
-                "--script", "sh",
-            ], catch_exceptions=False)
-            assert install.exit_code == 0, install.output
-
-            # setup() rejects a commands dir outside the project in Phase 2.
-            result = runner.invoke(app, [
-                "integration", "switch", "generic",
-                "--script", "sh",
-                "--integration-options", "--commands-dir ../outside",
-            ], catch_exceptions=False)
-        finally:
-            os.chdir(old_cwd)
+        installed = _run_in_project(project, ["integration", "install", "codex", "--script", "sh"])
+        assert installed.exit_code == 0, installed.output
+        tracked = [
+            project / ".specify/integration.json",
+            project / ".specify/init-options.json",
+            project / ".specify/templates/plan-template.md",
+            project / ".specify/integrations/claude.manifest.json",
+            project / ".specify/integrations/codex.manifest.json",
+        ]
+        before = {path: path.read_bytes() for path in tracked}
+        result = _run_in_project(project, [
+            "integration", "switch", "generic", "--script", "sh",
+            "--integration-options", "--commands-dir ../outside",
+        ])
         assert result.exit_code != 0
-
-        data = json.loads((project / ".specify" / "integration.json").read_text(encoding="utf-8"))
-        assert data["integration"] == "codex"
-        assert data["installed_integrations"] == ["codex"]
-
-        opts = json.loads((project / ".specify" / "init-options.json").read_text(encoding="utf-8"))
-        assert opts["integration"] == "codex"
-        assert opts["ai"] == "codex"
-
-        template = project / ".specify" / "templates" / "plan-template.md"
-        assert "$speckit-plan" in template.read_text(encoding="utf-8")
+        for path, content in before.items():
+            assert path.read_bytes() == content, path
 
     @pytest.mark.parametrize("edited_command", [None, "plan", "tasks"])
-    def test_failed_switch_syncs_fallback_manifest_without_blessing_user_edits(
+    def test_failed_switch_keeps_inactive_manifest_and_user_edits(
         self, tmp_path, tasks_preset_src, monkeypatch, edited_command
     ):
-        """Rollback refreshes preset hashes while retaining earlier edits (#5078)."""
         from specify_cli.integrations import get_integration
         from specify_cli.integrations.manifest import IntegrationManifest
 
@@ -1141,10 +1128,14 @@ class TestIntegrationSwitch:
         assert result.exit_code == 0, result.output
         result = _run_in_project(project, ["preset", "add", "--dev", str(tasks_preset_src)])
         assert result.exit_code == 0, result.output
+        rel = f".agents/skills/speckit-{edited_command or 'tasks'}/SKILL.md"
+        manifest = IntegrationManifest.load("codex", project)
+        expected_hash = manifest.files[rel]
         if edited_command:
-            edited_rel = f".agents/skills/speckit-{edited_command}/SKILL.md"
-            before = IntegrationManifest.load("codex", project).files[edited_rel]
-            (project / edited_rel).write_bytes(b"User-edited skill\n")
+            (project / rel).write_bytes(b"User-edited skill\n")
+        saved_manifest = manifest.manifest_path.read_bytes()
+        saved_state = (project / ".specify/integration.json").read_bytes()
+        saved_file = (project / rel).read_bytes()
 
         def fail_setup(*args, **kwargs):
             raise OSError("injected setup failure")
@@ -1152,34 +1143,20 @@ class TestIntegrationSwitch:
         monkeypatch.setattr(type(get_integration("gemini")), "setup", fail_setup)
         result = _run_in_project(project, ["integration", "switch", "gemini", "--script", "sh"])
         assert result.exit_code == 1, result.output
-        assert "injected setup failure" in " ".join(strip_ansi(result.output).split())
-        data = json.loads((project / ".specify/integration.json").read_bytes())
-        assert data["integration"] == "codex", "precondition: fallback restored"
-        manifest = IntegrationManifest.load("codex", project)
+        assert (project / ".specify/integration.json").read_bytes() == saved_state
+        assert manifest.manifest_path.read_bytes() == saved_manifest
+        assert (project / rel).read_bytes() == saved_file
+        reloaded = IntegrationManifest.load("codex", project)
+        assert reloaded.files[rel] == expected_hash
         if edited_command:
-            assert manifest.files[edited_rel] == before, "pre-existing edits must not be recorded as pristine"
-            assert edited_rel in manifest.check_modified()
+            assert rel in reloaded.check_modified(), "preexisting edits must remain edits"
         else:
-            rel = ".agents/skills/speckit-tasks/SKILL.md"
-            content = (project / rel).read_bytes()
-            assert b"Preset tasks body" in content
-            assert manifest.files[rel] == hashlib.sha256(content).hexdigest(), (
-                "manifest hash must match the preset-overridden skill (#5078)"
-            )
-        result = _run_in_project(project, ["integration", "status", "--json"])
-        assert result.exit_code == 0, result.output
-        report = json.loads(result.output)
-        assert report["modified_managed_files"] == (1 if edited_command else 0)
-        result = _run_in_project(project, ["integration", "upgrade", "codex", "--script", "sh"])
-        assert result.exit_code == (1 if edited_command else 0), result.output
-        if edited_command:
-            assert "modified since installation" in result.output
+            assert rel not in reloaded.check_modified()
 
     @pytest.mark.parametrize("state", ["missing", "corrupt", "save-error"])
-    def test_failed_switch_manifest_refresh_is_best_effort(
+    def test_failed_switch_preserves_inactive_manifest_even_if_unreadable(
         self, tmp_path, tasks_preset_src, monkeypatch, state
     ):
-        """Manifest failures must retain registration and the switch error (#5078)."""
         from specify_cli.integrations import get_integration
         from specify_cli.integrations.manifest import IntegrationManifest
 
@@ -1196,83 +1173,55 @@ class TestIntegrationSwitch:
         else:
             original_save = IntegrationManifest.save
 
-            def fail_fallback_save(self):
+            def refuse_codex_save(self):
                 if self.key == "codex":
                     raise OSError("injected manifest save failure")
                 return original_save(self)
 
-            monkeypatch.setattr(IntegrationManifest, "save", fail_fallback_save)
+            monkeypatch.setattr(IntegrationManifest, "save", refuse_codex_save)
+
+        tracked = [
+            project / ".specify/integration.json",
+            project / ".specify/init-options.json",
+            project / ".agents/skills/speckit-tasks/SKILL.md",
+        ]
+        before = {path: path.read_bytes() for path in tracked}
+        manifest_before = manifest_path.read_bytes() if manifest_path.exists() else None
 
         def fail_setup(*args, **kwargs):
             raise OSError("injected setup failure")
 
         monkeypatch.setattr(type(get_integration("gemini")), "setup", fail_setup)
         result = _run_in_project(project, ["integration", "switch", "gemini", "--script", "sh"])
-
         assert result.exit_code == 1, result.output
-        output = " ".join(strip_ansi(result.output).split())
-        assert "Error: Failed to install integration 'gemini' during switch: injected setup failure" in output
-        assert b"Preset tasks body" in (project / ".agents/skills/speckit-tasks/SKILL.md").read_bytes()
-        if state == "missing":
-            assert not manifest_path.exists(), "no manifest may be created"
-            assert "Warning:" not in output
-        elif state == "corrupt":
-            assert manifest_path.read_bytes() == b"{invalid"
-            assert "snapshot manifest hashes for integration 'codex'" in output
-            assert "resync manifest hashes" not in output
+        for path, content in before.items():
+            assert path.read_bytes() == content, path
+        assert (manifest_path.read_bytes() if manifest_path.exists() else None) == manifest_before
+        if state == "corrupt":
+            assert "unreadable" in " ".join(strip_ansi(result.output).split())
         else:
-            assert "injected manifest save failure" in output
-            assert "The switch was rolled back, but its manifest hashes may be stale." in output
+            assert "injected setup failure" in " ".join(strip_ansi(result.output).split())
 
-    def test_failed_switch_rescaffolds_fallback_extensions(self, tmp_path):
-        """Regression (review 3624184343).
-
-        When Phase 2 of a switch fails, rollback selects another installed
-        integration as the new default. Under active-only registration that
-        fallback may never have received extension artifacts (it was
-        installed while another integration was active), and Phase 1 already
-        unregistered the outgoing agent's artifacts — so the restored default
-        must be rescaffolded, not just written to metadata.
-        """
+    def test_failed_switch_keeps_outgoing_extension_registration(self, tmp_path):
         project = _init_project(tmp_path, "claude")
         result = _run_in_project(project, ["extension", "add", "git"])
-        assert result.exit_code == 0, f"extension add failed: {result.output}"
-        result = _run_in_project(project, [
-            "integration", "install", "codex",
-            "--script", "sh",
-        ])
         assert result.exit_code == 0, result.output
-
-        registry_path = project / ".specify" / "extensions" / ".registry"
-        registered = json.loads(registry_path.read_text(encoding="utf-8"))[
-            "extensions"
-        ]["git"]["registered_commands"]
-        assert "codex" not in registered, (
-            "precondition: secondary install has no extension artifacts"
-        )
-
-        # setup() rejects a commands dir outside the project in Phase 2.
+        result = _run_in_project(project, ["integration", "install", "codex", "--script", "sh"])
+        assert result.exit_code == 0, result.output
+        registry_path = project / ".specify/extensions/.registry"
+        saved_registry = registry_path.read_bytes()
+        registrations = json.loads(saved_registry)["extensions"]["git"]["registered_commands"]
+        assert "codex" not in registrations
+        assert "claude" in registrations
+        before_state = (project / ".specify/integration.json").read_bytes()
         result = _run_in_project(project, [
-            "integration", "switch", "generic",
-            "--script", "sh",
+            "integration", "switch", "generic", "--script", "sh",
             "--integration-options", "--commands-dir ../outside",
         ])
         assert result.exit_code != 0
+        assert (project / ".specify/integration.json").read_bytes() == before_state
+        assert registry_path.read_bytes() == saved_registry
 
-        data = json.loads(
-            (project / ".specify" / "integration.json").read_text(encoding="utf-8")
-        )
-        assert data["integration"] == "codex", "precondition: fallback restored"
-
-        registered = json.loads(registry_path.read_text(encoding="utf-8"))[
-            "extensions"
-        ]["git"]["registered_commands"]
-        assert "codex" in registered, (
-            "rollback must rescaffold extensions for the restored default"
-        )
-        assert (
-            project / ".agents" / "skills" / "speckit-git-feature" / "SKILL.md"
-        ).exists()
 
 
 class TestSwitchClearsMetadataAfterTeardown:

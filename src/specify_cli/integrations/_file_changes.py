@@ -37,12 +37,21 @@ def changing_file(path: Path, *, removal: bool = False):
 
 def write_text(path: Path, content: str, *, encoding: str = "utf-8", errors: str | None = None) -> int:
     with changing_file(path):
-        return path.write_text(content, encoding=encoding, errors=errors)
+        try:
+            return path.write_text(content, encoding=encoding, errors=errors)
+        except OSError:
+            # The attempted write may have truncated the file before failing.
+            after_file_change(path)
+            raise
 
 
 def write_bytes(path: Path, content: bytes) -> int:
     with changing_file(path):
-        return path.write_bytes(content)
+        try:
+            return path.write_bytes(content)
+        except OSError:
+            after_file_change(path)
+            raise
 
 
 def unlink(path: Path, *, missing_ok: bool = False) -> None:
