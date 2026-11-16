@@ -305,7 +305,7 @@ def _restore_snapshots(root: Path, journal: _FileJournal) -> list[Path]:
 def _transaction(
     root: Path, target: str | None,
     expected_state: dict[str, Any] | None, expected_records: dict[str, dict[str, Any]],
-    *, creation_root: Path | None = None,
+    *, creation_root: Path | None = None, tolerate_bad_target_manifest: bool = False,
 ):
     """Journal operation-owned writes under an inter-process integration lock."""
     from ..shared_infra import _exclusive_project_lock
@@ -338,6 +338,11 @@ def _transaction(
             try:
                 manifest = IntegrationManifest.load(key, root)
             except (ValueError, OSError) as exc:
+                if tolerate_bad_target_manifest and key == target:
+                    # Activating an installed integration can tolerate its bad
+                    # manifest. Keep the file protected by the managed folder
+                    # snapshot; the command itself skips hash resynchronization.
+                    continue
                 raise installer.IntegrationInstallError(
                     f"Integration manifest for {key!r} is unreadable: {exc}"
                 ) from exc
@@ -512,8 +517,8 @@ def external_lifecycle(operation: str):
                     and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
                 )
                 if switch_without_fallback:
-                    from .manifest import IntegrationManifest
                     from ._helpers import _MANIFEST_READ_ERRORS
+                    from .manifest import IntegrationManifest
 
                     try:
                         IntegrationManifest.load(installed[0], root)
@@ -521,12 +526,26 @@ def external_lifecycle(operation: str):
                         # Existing switch diagnostics explain how to recover an
                         # unreadable outgoing manifest before any file mutation.
                         switch_without_fallback = False
+                # Switching an installed built-in can still rewrite shared
+                # templates or metadata, even without a setup/teardown phase.
+                # Those writes need the same rollback as a fresh switch.
+                switch_installed_with_updates = (
+                    operation == "switch"
+                    and key in BUILTIN_INTEGRATION_KEYS
+                    and key in installed
+                    and (
+                        key != default_integration_key(state or {})
+                        or values.get("force")
+                        or values.get("refresh_shared_infra")
+                    )
+                )
                 if not records and not download and operation != "upgrade" and not (
                     (
                         operation == "install" and key in BUILTIN_INTEGRATION_KEYS
                         and not (root / ".specify" / "integrations" / f"{key}.manifest.json").exists()
                     )
                     or switch_without_fallback
+                    or switch_installed_with_updates
                 ):
                     return handler(*args, **kwargs)
                 with ExitStack() as stack:
@@ -552,7 +571,12 @@ def external_lifecycle(operation: str):
                     transaction = (
                         _transaction(root, key, state, records, creation_root=creation_root)
                         if operation == "init"
-                        else _transaction(root, key, state, records)
+                        else _transaction(
+                            root, key, state, records,
+                            tolerate_bad_target_manifest=(
+                                operation == "switch" and key in installed
+                            ),
+                        )
                     )
                     with transaction:
                         if recovery_token is not None and recovery_binding is None:

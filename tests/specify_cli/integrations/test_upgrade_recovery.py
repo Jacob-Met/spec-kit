@@ -19,7 +19,8 @@ def test_failed_upgrade_restores_original_generated_bytes_and_manifest(
     integration = get_integration("claude")
     manifest = IntegrationManifest.load("claude", project)
     own_paths = [
-        rel for rel in manifest.files
+        rel
+        for rel in manifest.files
         if rel.startswith(".claude/") and (project / rel).is_file()
     ]
     assert own_paths, manifest.files
@@ -53,13 +54,11 @@ def test_failed_upgrade_restores_original_generated_bytes_and_manifest(
 
 
 def test_nonforce_refuses_modified_generated_files_before_mutating(
-    tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     project = _init_project(tmp_path, "claude")
     manifest = IntegrationManifest.load("claude", project)
-    relative = next(
-        r for r in manifest.files if r.startswith(".claude/")
-    )
+    relative = next(r for r in manifest.files if r.startswith(".claude/"))
     changed = project / relative
     changed.write_bytes(changed.read_bytes() + b"\n# customization\n")
     before_manifest = manifest.manifest_path.read_bytes()
@@ -72,7 +71,10 @@ def test_nonforce_refuses_modified_generated_files_before_mutating(
 @pytest.mark.parametrize("writer", ("manifest", "host_helper", "host_text"))
 @pytest.mark.parametrize("preexisting", (True, False))
 def test_partial_failed_write_restores_bytes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: str, preexisting: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    writer: str,
+    preexisting: bool,
 ) -> None:
     """An interrupted owned write must not leave half a generated command."""
     from specify_cli.integrations._file_changes import write_bytes, write_text
@@ -80,9 +82,12 @@ def test_partial_failed_write_restores_bytes(
     project = _init_project(tmp_path, "claude")
     manifest = IntegrationManifest.load("claude", project)
     target = (
-        project / next(
+        project
+        / next(
             relative for relative in manifest.files if relative.startswith(".claude/")
-        ) if preexisting else project / ".claude/commands/speckit-new-rollback.md"
+        )
+        if preexisting
+        else project / ".claude/commands/speckit-new-rollback.md"
     )
     before = target.read_bytes() if preexisting else None
     user_file = project / ".claude/commands/user-notes.md"
@@ -130,7 +135,8 @@ def test_partial_failed_write_restores_bytes(
 
 
 def test_failed_builtin_secondary_install_preserves_user_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unsuccessful install cannot discard an existing unrelated user file."""
     project = _init_project(tmp_path, "claude")
@@ -145,14 +151,17 @@ def test_failed_builtin_secondary_install_preserves_user_file(
         raise RuntimeError("probe: secondary installation failed during setup")
 
     monkeypatch.setattr(get_integration("codex"), "setup", partial_then_fail)
-    result = _run_in_project(project, ["integration", "install", "codex", "--force", "--script", "sh"])
+    result = _run_in_project(
+        project, ["integration", "install", "codex", "--force", "--script", "sh"]
+    )
     assert result.exit_code != 0
     assert target.read_bytes() == b"My personal prompt", result.output
     assert state_path.read_bytes() == state_bytes, result.output
 
 
 def test_failed_builtin_switch_restores_previous_integration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A setup failure after Phase 1 must not uninstall the old integration."""
     project = _init_project(tmp_path, "claude")
@@ -171,8 +180,62 @@ def test_failed_builtin_switch_restores_previous_integration(
         raise RuntimeError("probe: switch target failed during setup")
 
     monkeypatch.setattr(get_integration("copilot"), "setup", partial_then_fail)
-    result = _run_in_project(project, ["integration", "switch", "copilot", "--script", "sh"])
+    result = _run_in_project(
+        project, ["integration", "switch", "copilot", "--script", "sh"]
+    )
     assert result.exit_code != 0
     assert previous_file.read_bytes() == previous_bytes, result.output
     assert state_path.read_bytes() == state_bytes, result.output
     assert not target.exists(), result.output
+
+
+@pytest.mark.parametrize(
+    "target_is_default", [False, True], ids=["installed", "default"]
+)
+@pytest.mark.parametrize(
+    "corrupt_target_manifest", [False, True], ids=["valid-manifest", "corrupt-manifest"]
+)
+def test_failed_installed_builtin_switch_restores_shared_templates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_is_default: bool,
+    corrupt_target_manifest: bool,
+) -> None:
+    """An interrupted shared refresh must not poison existing integrations."""
+    from specify_cli.integrations._file_changes import write_bytes
+
+    project = _init_project(tmp_path, "claude")
+    result = _run_in_project(
+        project, ["integration", "install", "codex", "--script", "sh"]
+    )
+    assert result.exit_code == 0, result.output
+    if target_is_default:
+        result = _run_in_project(project, ["integration", "use", "codex"])
+        assert result.exit_code == 0, result.output
+
+    shared = project / ".specify/templates/plan-template.md"
+    state = project / ".specify/integration.json"
+    manifest = project / ".specify/integrations/speckit.manifest.json"
+    target_manifest = project / ".specify/integrations/codex.manifest.json"
+    if corrupt_target_manifest:
+        target_manifest.write_bytes(b"{invalid")
+    previous = {
+        path: path.read_bytes() for path in (shared, state, manifest, target_manifest)
+    }
+    user_file = project / ".specify/templates/my-own-notes.md"
+    user_file.write_bytes(b"User-owned template note")
+
+    def fail_during_refresh(*args, **kwargs):
+        write_bytes(shared, b"CORRUPTED HALF-WRITTEN SHARED TEMPLATE")
+        raise OSError("injected refresh failure after shared template truncation")
+
+    monkeypatch.setattr("specify_cli._install_shared_infra", fail_during_refresh)
+    result = _run_in_project(
+        project,
+        ["integration", "switch", "codex", "--refresh-shared-infra"],
+    )
+    assert result.exit_code == 1, result.output
+    assert "Failed to refresh shared infrastructure" in result.output
+    for path, content in previous.items():
+        assert path.read_bytes() == content, f"{path.name} changed after failed refresh"
+    assert user_file.read_bytes() == b"User-owned template note"
