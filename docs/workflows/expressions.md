@@ -45,8 +45,8 @@ handler, so resume is at-least-once.
 | Form | Example |
 | --- | --- |
 | Dot-path lookup | `{{ inputs.name }}`, `{{ steps.test.output.exit_code }}` |
-| Literals | Strings, numbers, `true`, `false`, `none`/`null`, and lists such as `[1, 2]` |
-| Comparisons | `==`, `!=`, `>`, `<`, `>=`, `<=` |
+| Literals | Strings, numbers (including exponent form like `1e3` and `-2E+2`), `true`, `false`, `none`/`null`, and lists such as `[1, 2]` |
+| Comparisons | `==`, `!=`, `>`, `<`, `>=`, `<=` (numeric strings such as `"1e3"` compare as numbers) |
 | Boolean logic | `and`, `or`, `not` |
 | Membership | `in`, `not in` |
 | Filters | `{{ inputs.tags \| split(',') \| length }}` |
