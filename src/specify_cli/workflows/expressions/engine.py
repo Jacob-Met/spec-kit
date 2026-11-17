@@ -157,7 +157,7 @@ OR.2: /(?<![\w-])or(?![\w-])/
 FILTER_NAME: /[A-Za-z_][\w-]*/
 PATH: /""" + path_pattern + r"""/
 STRING: /'[^']*'/ | /"[^"]*"/
-NUMBER: /[+-]?(?:(?:\d(?:_?\d)*\.(?:\d(?:_?\d)*)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?|\d(?:_?\d)*)/
+NUMBER: /[+-]?(?:(?:\d(?:_?\d)*\.(?:\d(?:_?\d)*)?|\.\d(?:_?\d)*)|\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?/
 %import common.WS
 %ignore WS
 """
@@ -201,7 +201,7 @@ class _BuildAst(Transformer_NonRecursive):
 
     def number(self, token: Token) -> tuple[str, Any]:
         text = str(token)
-        return ("lit", float(text) if "." in text else int(text))
+        return ("lit", float(text) if any(c in text for c in ".eE") else int(text))
 
     def path(self, token: Token) -> tuple[str, str]:
         return ("path", str(token))

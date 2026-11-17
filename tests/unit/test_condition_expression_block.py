@@ -827,12 +827,8 @@ def test_filter_wiring_errors_are_still_rejections(condition):
         ("42", True),
         ("3.14", True),
         ("-7", True),
-        # `1e3` has no "." so the evaluator calls int() on it, which fails; it then
-        # falls through to a path lookup and resolves to None. The gate used to
-        # decide this for itself with a float() test that accepted `1e3`, and the
-        # correction turned a truthy condition false. Now the evaluator reaches the
-        # dot-path resolution with `1e3` and reports it, so the two cannot disagree.
-        ("1e3", False),
+        # Exponent literals are numeric in both the evaluator and gate.
+        ("1e3", True),
         ("'one'", True),
         ('"one"', True),
         # Two literals, not one: the evaluator requires the opening quote's match to
@@ -861,7 +857,6 @@ def test_literal_handling_comes_from_the_evaluator(condition, resolvable):
         # to None however the index is written.
         "inputs[0]",
         "steps[1]",
-        "1e3",
         "'a' 'b'",
     ],
 )

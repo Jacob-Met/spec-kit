@@ -13,7 +13,7 @@ def _coerce_number(value: Any) -> Any:
     """Return *value* as int/float if it is a numeric string, else unchanged."""
     if isinstance(value, str):
         try:
-            return float(value) if "." in value else int(value)
+            return float(value) if any(c in value for c in ".eE") else int(value)
         except ValueError:
             return value
     return value

@@ -93,7 +93,7 @@ Notes on the newer filters:
 
 Operators bind from loosest to tightest as `or`, `and`, `not`, then the comparisons. All comparisons (`==`, `!=`, `>`, `<`, `>=`, `<=`, `in`, `not in`) share one level and are evaluated left to right; none has priority over another. `{{ a == b > 0 }}` therefore means `{{ (a == b) > 0 }}`. To combine comparisons, use parentheses or `and`/`or`.
 
-The body of every `{{ }}` block must be a valid expression. Text that is not one, such as prose (`{{ some text }}`), a key with characters other than letters, digits, `_` and `-` (`{{ inputs.weird:key }}`), or arithmetic (`{{ count + 1 }}`), raises a `ValueError` naming the offending token. Numbers may be written as `5`, `-5`, `+5`, `1_000`, `0.5`, `.5`, `5.`, or `1.5e3`.
+The body of every `{{ }}` block must be a valid expression. Text that is not one, such as prose (`{{ some text }}`), a key with characters other than letters, digits, `_` and `-` (`{{ inputs.weird:key }}`), or arithmetic (`{{ count + 1 }}`), raises a `ValueError` naming the offending token. Numbers may be written as `5`, `-5`, `+5`, `1_000`, `0.5`, `.5`, `5.`, `1.5e3`, or `1e3` (exponents also work without a decimal point).
 
 > **Compatibility:** Earlier releases could resolve an expression such as `{{ inputs.weird:key }}` when the key existed; this expression now fails at runtime. Rename keys you control (for example, `weird:key` to `weird_key`) and update their references. Quoted-key lookup is not supported. Workflow validation may not detect these expressions before execution.
 
